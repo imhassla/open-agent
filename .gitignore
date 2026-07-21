@@ -1,0 +1,9 @@
+# build output
+/open-agent
+/oa
+*.test
+# local secrets & state
+.env
+/reports/
+# editor/OS cruft
+.DS_Store

@@ -1,0 +1,1219 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>open-agent dashboard</title>
+    <style>
+        /* Dashboard styling - dark theme */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: system-ui, -apple-system, sans-serif;
+        }
+        
+        body {
+            background-color: #0d1117;
+            color: #c9d1d9;
+            padding: 20px;
+            line-height: 1.5;
+        }
+        
+        /* Header */
+        header {
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #30363d;
+        }
+        
+        h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+            color: #58a6ff;
+        }
+        
+        .summary {
+            font-size: 1.1em;
+            color: #8b949e;
+        }
+        
+        .summary-value {
+            font-weight: bold;
+            color: #c9d1d9;
+        }
+        
+        /* Sections */
+        .section {
+            margin-bottom: 40px;
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 20px;
+            overflow-x: auto;
+        }
+        
+        h2 {
+            font-size: 1.5em;
+            margin-bottom: 20px;
+            color: #58a6ff;
+            border-bottom: 1px solid #30363d;
+            padding-bottom: 10px;
+        }
+        
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+            background-color: #0d1117;
+        }
+        
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #30363d;
+            vertical-align: top;
+        }
+        
+        th {
+            background-color: #161b22;
+            font-weight: 600;
+            color: #8b949e;
+            cursor: default;
+        }
+        
+        tr {
+            transition: background-color 0.2s;
+            cursor: pointer;
+        }
+        
+        tr:hover {
+            background-color: #161b22;
+        }
+        
+        tr.selected {
+            background-color: #1f2937;
+        }
+        
+        /* Table cell specific styling */
+        .id-cell {
+            font-family: monospace;
+            font-size: 0.9em;
+            color: #8b949e;
+        }
+        
+        .goal-cell {
+            max-width: 300px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        .cost-cell {
+            font-family: monospace;
+            color: #ff7b72;
+        }
+        
+        .tokens-cell {
+            font-family: monospace;
+            color: #8b949e;
+        }
+        
+        /* Detail panel */
+        .detail-panel {
+            display: none;
+            margin-top: 20px;
+            padding: 20px;
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            font-size: 0.95em;
+        }
+        
+        .detail-panel.visible {
+            display: block;
+        }
+        
+        .detail-header {
+            font-weight: bold;
+            color: #58a6ff;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+        }
+        
+        .task-list {
+            margin-bottom: 20px;
+        }
+        
+        .task-item {
+            padding: 8px 12px;
+            margin-bottom: 5px;
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            font-size: 0.95em;
+        }
+        
+        .task-id {
+            font-family: monospace;
+            color: #8b949e;
+            margin-right: 10px;
+        }
+        
+        .task-role {
+            color: #56d364;
+            font-weight: 500;
+            margin-right: 10px;
+        }
+        
+        .task-goal {
+            color: #c9d1d9;
+        }
+        
+        .timeline {
+            max-height: 400px;
+            overflow-y: auto;
+            margin-bottom: 20px;
+            border: 1px solid #30363d;
+            background-color: #0d1117;
+        }
+        
+        .timeline-item {
+            padding: 10px 12px;
+            border-bottom: 1px solid #30363d;
+            font-size: 0.9em;
+        }
+        
+        .timeline-item:last-child {
+            border-bottom: none;
+        }
+        
+        .timeline-task {
+            color: #58a6ff;
+            font-weight: bold;
+            margin-right: 8px;
+        }
+        
+        .timeline-step {
+            color: #c9d1d9;
+            margin-right: 8px;
+        }
+        
+        .timeline-other {
+            color: #8b949e;
+            margin-right: 8px;
+        }
+        
+        .timeline-text {
+            color: #c9d1d9;
+        }
+        
+        .timeline-text-warn {
+            color: #f0883e;
+            font-weight: 500;
+        }
+
+        .run-badge { font-size: 0.75em; padding: 2px 8px; border-radius: 10px; margin-left: 10px; vertical-align: middle; }
+        .run-badge.ok { background: #1a3a1a; color: #6fdc6f; }
+        .run-badge.partial { background: #3a331a; color: #e0c060; }
+        .run-badge.failed { background: #3a1a1a; color: #e06060; }
+        .detail-cost { font-size: 0.8em; color: #888; margin-left: 12px; vertical-align: middle; }
+        .timeline-text-escalate { color: #7fb3ff; }
+        .timeline-text-skip { color: #e0a860; }
+        .timeline-text-error {
+            color: #ff7b72;
+            font-weight: 600;
+        }
+        
+        .model-summary {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #30363d;
+        }
+        
+        .model-summary h3 {
+            font-size: 1.2em;
+            margin-bottom: 15px;
+            color: #58a6ff;
+        }
+        
+        .model-summary table {
+            width: auto;
+            min-width: 300px;
+            margin-top: 0;
+        }
+        
+        /* Error messages */
+        .error-message {
+            background-color: #50040f;
+            border: 1px solid #ff0c36;
+            color: #ff9aa2;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 20px 0;
+            font-size: 0.95em;
+        }
+        
+        .error-header {
+            font-weight: bold;
+            color: #ff7b72;
+            margin-bottom: 5px;
+        }
+        
+        /* Loading state */
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            color: #8b949e;
+        }
+        
+        .spinner {
+            width: 40px;
+            height: 40px;
+            margin-right: 10px;
+            border: 4px solid #30363d;
+            border-top-color: #58a6ff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Utility classes */
+        .hidden {
+            display: none;
+        }
+        
+        /* Responsive table scrolling */
+        .table-container {
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        
+        /* Empty state styling */
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #8b949e;
+            font-style: italic;
+        }
+        
+        /* Model cell styling */
+        .model-cell {
+            font-family: monospace;
+            color: #56d364;
+        }
+
+        /* Router ladder styling */
+        .ladder-role-block {
+            margin-bottom: 25px;
+        }
+
+        .ladder-role-block:last-child {
+            margin-bottom: 0;
+        }
+
+        .ladder-role-title {
+            font-size: 1.1em;
+            color: #58a6ff;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .ladder-table {
+            width: 100%;
+            margin-bottom: 10px;
+        }
+
+        tr.est-tag { opacity: 0.5; font-size: 0.75em; }
+        .benched {
+            color: #6e7681;
+        }
+
+        tr.benched td {
+            text-decoration: line-through;
+        }
+
+        .ladder-current {
+            color: #56d364;
+            font-weight: bold;
+            margin-left: 8px;
+            text-decoration: none;
+        }
+        
+        /* Cost chart styling */
+        .chart-total {
+            font-size: 1.1em;
+            color: #8b949e;
+            margin-bottom: 15px;
+        }
+
+        .chart-total .summary-value {
+            color: #ff7b72;
+            font-weight: bold;
+        }
+
+        #cost-chart {
+            display: block;
+            max-width: 100%;
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+        }
+
+        .auto-refresh-control {
+            margin-top: 10px;
+            font-size: 0.9em;
+            color: #8b949e;
+        }
+
+        .auto-refresh-control input {
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>open-agent dashboard</h1>
+        <div class="summary">
+            Total Cost: <span class="summary-value">$0.00</span> |
+            Total Runs: <span class="summary-value">0</span>
+        </div>
+        <div class="auto-refresh-control">
+            <label><input type="checkbox" id="auto-refresh-toggle"> auto-refresh (10s)</label>
+        </div>
+    </header>
+
+    <main>
+        <!-- Runs Section -->
+        <section class="section">
+            <h2>Runs</h2>
+            <div id="runs-loading" class="loading">
+                <div class="spinner"></div>
+                Loading runs...
+            </div>
+            <div id="runs-error" class="error-message hidden">
+                <div class="error-header">Error loading runs</div>
+                <div id="runs-error-text"></div>
+            </div>
+            <div id="runs-container" class="hidden">
+                <div class="table-container">
+                    <table id="runs-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Goal</th>
+                                <th>Tasks</th>
+                                <th>Tokens</th>
+                                <th>Cost</th>
+                            </tr>
+                        </thead>
+                        <tbody id="runs-tbody">
+                            <!-- Filled by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- Detail Panel (initially hidden) -->
+        <section id="detail-panel" class="detail-panel">
+            <div class="detail-header">
+                Run Details (ID: <span id="detail-run-id">loading...</span>)
+                <span id="detail-status" class="run-badge"></span>
+                <span id="detail-cost" class="detail-cost"></span>
+            </div>
+            
+            <div class="task-list">
+                <h3>Tasks</h3>
+                <div id="detail-tasks-container">
+                    <!-- Task list filled by JavaScript -->
+                </div>
+            </div>
+            
+            <div class="timeline">
+                <h3>Timeline</h3>
+                <div id="detail-timeline-container">
+                    <!-- Timeline filled by JavaScript -->
+                </div>
+            </div>
+            
+            <div class="model-summary">
+                <h3>Model Summary</h3>
+                <table id="detail-model-summary">
+                    <thead>
+                        <tr>
+                            <th>Model</th>
+                            <th>Steps</th>
+                            <th>Total Tokens</th>
+                            <th>Total Cost</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Filled by JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Models Section -->
+        <section class="section">
+            <h2>Models</h2>
+            <div id="models-loading" class="loading">
+                <div class="spinner"></div>
+                Loading models...
+            </div>
+            <div id="models-error" class="error-message hidden">
+                <div class="error-header">Error loading models</div>
+                <div id="models-error-text"></div>
+            </div>
+            <div id="models-container" class="hidden">
+                <div class="table-container">
+                    <table id="models-table">
+                        <thead>
+                            <tr>
+                                <th>Model</th>
+                                <th>Runs</th>
+                                <th>OK Rate</th>
+                                <th>Total Cost</th>
+                                <th>Cache%</th>
+                            </tr>
+                        </thead>
+                        <tbody id="models-tbody">
+                            <!-- Filled by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- Router Ladder Section -->
+        <section class="section">
+            <h2>Router ladder</h2>
+            <div id="ladder-loading" class="loading">
+                <div class="spinner"></div>
+                Loading ladder...
+            </div>
+            <div id="ladder-error" class="error-message hidden">
+                <div class="error-header">Error loading ladder</div>
+                <div id="ladder-error-text"></div>
+            </div>
+            <div id="ladder-container" class="hidden">
+                <div id="ladder-tables">
+                    <!-- Filled by JavaScript: one .ladder-role-block per role -->
+                </div>
+            </div>
+        </section>
+
+        <!-- Router ratings Section -->
+        <section class="section">
+            <h2>Router ratings</h2>
+            <div id="ratings-loading" class="loading">
+                <div class="spinner"></div>
+                Loading ratings...
+            </div>
+            <div id="ratings-error" class="error-message hidden">
+                <div class="error-header">Error loading ratings</div>
+                <div id="ratings-error-text"></div>
+            </div>
+            <div id="ratings-container" class="hidden">
+                <div class="table-container">
+                    <table id="ratings-table">
+                        <thead>
+                            <tr>
+                                <th>Bucket</th>
+                                <th>Model</th>
+                                <th>Pass Rate</th>
+                                <th>Sample Size</th>
+                                <th>Avg Cost</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ratings-tbody">
+                            <!-- Filled by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Cost Over Time Section -->
+        <section class=section>
+            <h2>Cost over time (last 7 days)</h2>
+            <div id=chart-loading class=loading>
+                <div class=spinner></div>
+                Loading cost chart...
+            </div>
+            <div id=chart-error class=error-message hidden>
+                <div class=error-header>Error loading cost chart</div>
+                <div id=chart-error-text></div>
+            </div>
+            <div id=chart-container class=hidden>
+                <div class="chart-total">Total (7d): <span id="chart-total-value" class="summary-value">$0.0000</span></div>
+                <canvas id="cost-chart" width="900" height="260"></canvas>
+                <div id="chart-empty" class="empty-state hidden">No telemetry data in the last 7 days</div>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        // Helper functions - utility functions for formatting data
+        function formatCurrency(amount) {
+            // Format as USD with 4 decimal places like $0.0146
+            if (typeof amount === 'number') {
+                return '$' + amount.toFixed(4);
+            }
+            // Handle string values that might come from JSON
+            const num = parseFloat(amount);
+            if (!isNaN(num)) {
+                return '$' + num.toFixed(4);
+            }
+            return '$0.0000';
+        }
+        
+        function truncateText(text, maxLength = 80) {
+            // Truncate text to maxLength characters, adding ellipsis if truncated
+            if (!text) return '';
+            return text.length > maxLength ? text.substring(0, maxLength) + '…' : text;
+        }
+        
+        function formatPassRate(rate) {
+            // Format pass rate as percentage with 2 decimal places
+            if (typeof rate === 'number') {
+                return rate.toFixed(2) + '%';
+            }
+            return '0.00%';
+        }
+        
+        // Main application object - contains all app logic and state
+        const app = {
+            init() {
+                // Initialize the application by caching DOM elements and loading data
+                this.cacheElements();
+                this.loadRuns();
+                this.loadModels();
+                this.loadRatings();
+                this.loadLadder();
+                this.loadChart();
+                this.setupAutoRefresh();
+            },
+            
+            cacheElements() {
+                // Cache all DOM elements for quick access and performance
+                this.elements = {
+                    runsLoading: document.getElementById('runs-loading'),
+                    runsError: document.getElementById('runs-error'),
+                    runsErrorText: document.getElementById('runs-error-text'),
+                    runsContainer: document.getElementById('runs-container'),
+                    runsTableBody: document.getElementById('runs-tbody'),
+                    summaryTotalCost: document.querySelector('.summary .summary-value:first-child'),
+                    summaryTotalRuns: document.querySelector('.summary .summary-value:last-child'),
+                    detailPanel: document.getElementById('detail-panel'),
+                    detailRunId: document.getElementById('detail-run-id'),
+                    detailStatus: document.getElementById('detail-status'),
+                    detailCost: document.getElementById('detail-cost'),
+                    detailTasksContainer: document.getElementById('detail-tasks-container'),
+                    detailTimelineContainer: document.getElementById('detail-timeline-container'),
+                    detailModelSummaryBody: document.querySelector('#detail-model-summary tbody'),
+                    modelsLoading: document.getElementById('models-loading'),
+                    modelsError: document.getElementById('models-error'),
+                    modelsErrorText: document.getElementById('models-error-text'),
+                    modelsContainer: document.getElementById('models-container'),
+                    modelsTableBody: document.getElementById('models-tbody'),
+                    ratingsLoading: document.getElementById('ratings-loading'),
+                    ratingsError: document.getElementById('ratings-error'),
+                    ratingsErrorText: document.getElementById('ratings-error-text'),
+                    ratingsContainer: document.getElementById('ratings-container'),
+                    ratingsTableBody: document.getElementById('ratings-tbody'),
+                    ladderLoading: document.getElementById('ladder-loading'),
+                    ladderError: document.getElementById('ladder-error'),
+                    ladderErrorText: document.getElementById('ladder-error-text'),
+                    ladderContainer: document.getElementById('ladder-container'),
+                    ladderTables: document.getElementById('ladder-tables'),
+                    chartLoading: document.getElementById('chart-loading'),
+                    chartError: document.getElementById('chart-error'),
+                    chartErrorText: document.getElementById('chart-error-text'),
+                    chartContainer: document.getElementById('chart-container'),
+                    chartCanvas: document.getElementById('cost-chart'),
+                    autoRefreshToggle: document.getElementById('auto-refresh-toggle'),
+                    chartTotalValue: document.getElementById('chart-total-value'),
+                    chartEmpty: document.getElementById('chart-empty'),
+                };
+            },
+            
+            // Loading/error handlers - manage UI state for loading and error states
+            showLoading(elementId) {
+                // Show loading indicator for a specific section
+                const element = document.getElementById(elementId);
+                element.style.display = 'flex';
+            },
+            
+            hideLoading(elementId) {
+                // Hide loading indicator for a specific section
+                const element = document.getElementById(elementId);
+                element.style.display = 'none';
+            },
+            
+            showError(section, message) {
+                // Display error message for a specific section
+                const errorElement = document.getElementById(section + '-error');
+                const errorText = document.getElementById(section + '-error-text');
+                errorText.textContent = message || 'Unknown error';
+                errorElement.classList.remove('hidden');
+                this.hideLoading(section + '-loading');
+            },
+            
+            hideError(section) {
+                // Hide error message for a specific section
+                const errorElement = document.getElementById(section + '-error');
+                errorElement.classList.add('hidden');
+            },
+            
+            // API calls with error handling - fetch data from endpoints with comprehensive error handling
+            async fetchAPI(url, section) {
+                // Make API request with loading state and error handling
+                this.showLoading(section + '-loading');
+                this.hideError(section);
+                
+                try {
+                    const response = await fetch(url);
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    return await response.json();
+                } catch (error) {
+                    this.showError(section, error.message);
+                    return null;
+                } finally {
+                    this.hideLoading(section + '-loading');
+                }
+            },
+            
+            // Data loading methods - load data from all API endpoints
+            async loadRuns() {
+                // Load runs data and render it
+                const runs = await this.fetchAPI('/api/runs', 'runs');
+                if (!runs) return;
+                
+                this.renderRuns(runs);
+                this.updateSummary(runs);
+            },
+            
+            async loadModels() {
+                // Load telemetry data and render models section
+                const telemetry = await this.fetchAPI('/api/telemetry', 'models');
+                if (!telemetry) return;
+                
+                this.renderModels(telemetry);
+            },
+            
+            async loadRatings() {
+                // Load ratings data and render ratings section
+                const ratings = await this.fetchAPI('/api/ratings', 'ratings');
+                if (!ratings) return;
+                
+                this.renderRatings(ratings);
+            },
+            
+            async loadLadder() {
+                // Load router cost-ladder data (/api/ladder: array of {role, rungs:[{model,price_per_mtok,samples,pass_rate,avg_cost,effective_cost,picked}]}); rungs come sorted by effective_cost (the ladder's real ordering key)
+                const ladders = await this.fetchAPI('/api/ladder', 'ladder');
+                if (!ladders) return;
+                
+                this.renderLadder(ladders);
+            },
+
+            async loadChart() {
+                // Load telemetry and render the cumulative-cost-over-7-days canvas chart.
+                const telemetry = await this.fetchAPI('/api/telemetry', 'chart');
+                if (!telemetry) return;
+
+                this.renderChart(telemetry);
+            },
+            
+            // Data rendering methods - render data to the UI
+            updateSummary(runs) {
+                // Calculate and update the total cost and runs summary
+                let totalCost = 0;
+                let totalRuns = 0;
+                
+                // Iterate through all runs and aggregate metrics
+                for (const run of runs) {
+                    totalCost += parseFloat(run.cost || 0) || 0;
+                    totalRuns++;
+                }
+                
+                // Update UI with calculated totals
+                this.elements.summaryTotalCost.textContent = formatCurrency(totalCost);
+                this.elements.summaryTotalRuns.textContent = totalRuns;
+            },
+            
+            renderRuns(runs) {
+                // Render runs data to the table
+                this.elements.runsTableBody.innerHTML = '';
+                
+                // Iterate through each run and create table row
+                for (const run of runs) {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td class="id-cell">${run.id}</td>
+                        <td class="goal-cell" title="${run.goal || ''}">${truncateText(run.goal || '')}</td>
+                        <td>${run.tasks}</td>
+                        <td class="tokens-cell">${run.tokens.toLocaleString()}</td>
+                        <td class="cost-cell">${formatCurrency(run.cost)}</td>
+                    `;
+                    
+                    // Add click handler for row to show details
+                    row.addEventListener('click', () => this.loadRunDetails(run.id));
+                    row.title = 'Click to view details';
+                    
+                    this.elements.runsTableBody.appendChild(row);
+                }
+                
+                // Show the runs container
+                this.elements.runsContainer.classList.remove('hidden');
+            },
+            
+            async loadRunDetails(runId) {
+                // Load detailed information for a specific run
+                // First, clear previous details and show panel
+                this.clearDetailPanel();
+                this.elements.detailPanel.classList.add('visible');
+                this.elements.detailRunId.textContent = runId;
+                
+                // Show loading for details
+                this.elements.detailPanel.insertAdjacentHTML('afterbegin', `
+                    <div class="loading" style="position: relative; padding: 20px 0;">
+                        <div class="spinner"></div>
+                        Loading run details...
+                    </div>
+                `);
+                
+                const runData = await this.fetchAPI(`/api/run?id=${runId}`, 'detail');
+                
+                // Remove loading if present
+                const loadingDiv = this.elements.detailPanel.querySelector('.loading');
+                if (loadingDiv) loadingDiv.remove();
+                
+                if (!runData) return;
+                
+                // Render details
+                this.renderRunDetails(runData, runId);
+            },
+            
+            clearDetailPanel() {
+                // Clear the detail panel and hide it
+                this.elements.detailTasksContainer.innerHTML = '';
+                this.elements.detailTimelineContainer.innerHTML = '';
+                this.elements.detailModelSummaryBody.innerHTML = '';
+                this.elements.detailPanel.classList.remove('visible');
+                
+                // Remove any existing loading
+                const loadingDiv = this.elements.detailPanel.querySelector('.loading');
+                if (loadingDiv) loadingDiv.remove();
+            },
+            
+            renderRunStatus(data) {
+                const badge = this.elements.detailStatus, costEl = this.elements.detailCost;
+                if (!badge) return;
+                const events = data.events || [];
+                let failed = 0, actual = 0;
+                for (const e of events) {
+                    const t = e.Text || '';
+                    if (e.Kind === 'task' && /task failed; skipping/i.test(t)) failed++;
+                    if (e.Kind === 'step') actual += (e.Cost || 0);
+                }
+                // ok = no skipped branches; partial = some failed but the run produced a
+                // terminal; failed = the run reported terminal did not complete.
+                const terminalFailed = events.some(e => /terminal deliverable did not complete/i.test(e.Text || ''));
+                let cls = 'ok', label = 'OK';
+                if (terminalFailed) { cls = 'failed'; label = 'FAILED'; }
+                else if (failed > 0) { cls = 'partial'; label = `PARTIAL (${failed} skipped)`; }
+                badge.className = 'run-badge ' + cls;
+                badge.textContent = label;
+                // Cost: ladder estimate (from /api/run) vs actual (summed step costs).
+                let est = null;
+                if (data.estimate && typeof data.estimate.Total === 'number') est = data.estimate.Total;
+                const parts = [];
+                if (est !== null) parts.push(`est ${formatCurrency(est)}`);
+                parts.push(`actual ${formatCurrency(actual)}`);
+                costEl.textContent = parts.join(' · ');
+            },
+
+            renderRunDetails(data, runId) {
+                // Render detailed run information including tasks and timeline
+                if (!data) {
+                    this.elements.detailTasksContainer.innerHTML = `
+                        <div class="error-message">
+                            <div class="error-header">Error loading run details</div>
+                            <div>Failed to fetch run data</div>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                // Run status badge + cost (estimate vs actual), derived from events.
+                this.renderRunStatus(data);
+
+                // Render tasks from plan
+                if (data.plan && data.plan.tasks && data.plan.tasks.length > 0) {
+                    for (const task of data.plan.tasks) {
+                        const taskElement = document.createElement('div');
+                        taskElement.className = 'task-item';
+                        taskElement.innerHTML = `
+                            <span class="task-id">${task.id}</span>
+                            <span class="task-role">${task.role}</span>
+                            <span class="task-goal" title="${task.goal || ''}">${truncateText(task.goal || '', 60)}</span>
+                        `;
+                        this.elements.detailTasksContainer.appendChild(taskElement);
+                    }
+                } else {
+                    this.elements.detailTasksContainer.innerHTML = '<div class="empty-state">No tasks in this run</div>';
+                }
+                
+                // Render timeline events
+                if (data.events && data.events.length > 0) {
+                    // Group events by type for rendering
+                    const modelGroups = {};
+                    
+                    for (const event of data.events) {
+                        const item = document.createElement('div');
+                        item.className = 'timeline-item';
+                        
+                        if (event.Kind === 'task') {
+                            const text = event.Text || '';
+                            let textClass = 'timeline-text', icon = '';
+                            if (text !== 'start' && text !== 'done') {
+                                if (/escalat/i.test(text)) { textClass = 'timeline-text-escalate'; icon = '↑ '; }
+                                else if (/skipping|degrad|skipped/i.test(text)) { textClass = 'timeline-text-skip'; icon = '⊘ '; }
+                                else if (/fail|error/i.test(text)) { textClass = 'timeline-text-error'; icon = '✗ '; }
+                                else { textClass = 'timeline-text-warn'; }
+                            }
+                            item.innerHTML = `
+                                <span class="timeline-task">[TASK ${event.TaskID || '—'}]</span>
+                                <span class="${textClass}">${icon}${text} ${event.Model ? `(${event.Model})` : ''}</span>
+                            `;
+                        } else if (event.Kind === 'step') {
+                            item.innerHTML = `
+                                <span class="timeline-step">● ${event.Model}</span>
+                                <span class="timeline-text">${event.Tokens.toLocaleString()} tok · ${formatCurrency(event.Cost)} ${event.Text ? '(' + event.Text + ')' : ''}</span>
+                            `;
+                            
+                            // Track for model summary
+                            if (!modelGroups[event.Model]) {
+                                modelGroups[event.Model] = { tokens: 0, cost: 0, steps: 0 };
+                            }
+                            modelGroups[event.Model].tokens += event.Tokens || 0;
+                            modelGroups[event.Model].cost += event.Cost || 0;
+                            modelGroups[event.Model].steps += 1;
+                        } else {
+                            item.innerHTML = `
+                                <span class="timeline-other">[${event.Kind}]</span>
+                                <span class="timeline-text">${event.Text}</span>
+                            `;
+                        }
+                        
+                        this.elements.detailTimelineContainer.appendChild(item);
+                    }
+                    
+                    // Render model summary table
+                    this.renderDetailModelSummary(modelGroups);
+                } else {
+                    this.elements.detailTimelineContainer.innerHTML = '<div class="empty-state">No events in timeline</div>';
+                }
+            },
+            
+            renderDetailModelSummary(modelGroups) {
+                // Render the model summary table with aggregated step data
+                this.elements.detailModelSummaryBody.innerHTML = '';
+                
+                if (!modelGroups || Object.keys(modelGroups).length === 0) {
+                    this.elements.detailModelSummaryBody.innerHTML = '<tr><td colspan="4" class="empty-state">No step events to summarize</td></tr>';
+                    return;
+                }
+                
+                // Sort models alphabetically for consistent display
+                const sortedModels = Object.keys(modelGroups).sort();
+                
+                for (const model of sortedModels) {
+                    const group = modelGroups[model];
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${model}</td>
+                        <td>${group.steps}</td>
+                        <td>${group.tokens.toLocaleString()}</td>
+                        <td>${formatCurrency(group.cost)}</td>
+                    `;
+                    this.elements.detailModelSummaryBody.appendChild(row);
+                }
+            },
+            
+            renderModels(telemetry) {
+                // Render the models table grouped by model field
+                // Group by model field and compute statistics
+                const modelGroups = {};
+                
+                for (const record of telemetry) {
+                    if (!record.model) continue;
+                    
+                    if (!modelGroups[record.model]) {
+                        modelGroups[record.model] = {
+                            runs: 0,
+                            ok: 0,
+                            cost: 0,
+                            total: 0,
+                            tokensSum: 0,
+                            cachedSum: 0
+                        };
+                    }
+                    
+                    modelGroups[record.model].total++;
+                    modelGroups[record.model].runs++;
+                    modelGroups[record.model].cost += parseFloat(record.cost || 0);
+                    modelGroups[record.model].tokensSum += (record.tokens || 0);
+                    modelGroups[record.model].cachedSum += (record.cached_tokens || 0);
+                    
+                    if (record.ok === true) {
+                        modelGroups[record.model].ok++;
+                    }
+                }
+                
+                this.elements.modelsTableBody.innerHTML = '';
+                
+                // Sort models alphabetically
+                const sortedModels = Object.keys(modelGroups).sort();
+                
+                for (const model of sortedModels) {
+                    const group = modelGroups[model];
+                    const okRate = group.total > 0 ? (group.ok / group.total) * 100 : 0;
+                    const cachePct = group.tokensSum > 0 ? ((100 * group.cachedSum / group.tokensSum).toFixed(0) + '%') : '—';
+                    
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${model}</td>
+                        <td>${group.runs}</td>
+                        <td>${okRate.toFixed(2)}%</td>
+                        <td>${formatCurrency(group.cost)}</td>
+                        <td>${cachePct}</td>
+                    `;
+                    this.elements.modelsTableBody.appendChild(row);
+                }
+                
+                this.elements.modelsContainer.classList.remove('hidden');
+            },
+            
+            renderRatings(ratings) {
+                // Render the router ratings table from the ratings.json data
+                if (!ratings || typeof ratings !== 'object') {
+                    this.elements.ratingsContainer.classList.remove('hidden');
+                    this.elements.ratingsTableBody.innerHTML = 
+                        '<tr><td colspan="5" class="empty-state">No rating data available</td></tr>';
+                    return;
+                }
+                
+                const rows = [];
+                
+                // Process ratings object
+                for (const key of Object.keys(ratings)) {
+                    if (!key.includes('|')) continue;
+                    
+                    const lastPipeIndex = key.lastIndexOf('|');
+                    const bucket = key.substring(0, lastPipeIndex);
+                    const model = key.substring(lastPipeIndex + 1);
+                    const rating = ratings[key];
+                    
+                    rows.push({
+                        bucket,
+                        model,
+                        passRate: rating.pass_rate,
+                        samples: rating.samples,
+                        avgCost: rating.avg_cost
+                    });
+                }
+                
+                // Sort by bucket then model
+                rows.sort((a, b) => {
+                    if (a.bucket !== b.bucket) return a.bucket.localeCompare(b.bucket);
+                    return a.model.localeCompare(b.model);
+                });
+                
+                this.elements.ratingsTableBody.innerHTML = '';
+                
+                for (const row of rows) {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${row.bucket}</td>
+                        <td class="model-cell">${row.model}</td>
+                        <td>${formatPassRate(row.passRate)}</td>
+                        <td>${row.samples}</td>
+                        <td>${formatCurrency(row.avgCost)}</td>
+                    `;
+                    this.elements.ratingsTableBody.appendChild(tr);
+                }
+                
+                this.elements.ratingsContainer.classList.remove('hidden');
+            },
+
+            renderLadder(ladders) {
+                // Render one table per role from the /api/ladder response.
+                this.elements.ladderTables.innerHTML = '';
+
+                if (!Array.isArray(ladders) || ladders.length === 0) {
+                    this.elements.ladderTables.innerHTML = '<div class="empty-state">No ladder data available</div>';
+                    this.elements.ladderContainer.classList.remove('hidden');
+                    return;
+                }
+
+                for (const roleLadder of ladders) {
+                    const block = document.createElement('div');
+                    block.className = 'ladder-role-block';
+
+                    const title = document.createElement('div');
+                    title.className = 'ladder-role-title';
+                    title.textContent = roleLadder.role;
+                    block.appendChild(title);
+
+                    const table = document.createElement('table');
+                    table.className = 'ladder-table';
+                    table.innerHTML = '<thead><tr><th>Model</th><th>$/Mtok</th><th>Samples</th><th>Pass%</th><th>Avg cost</th><th>Est $/task ▲</th></tr></thead>';
+
+                    const tbody = document.createElement('tbody');
+                    const rungs = roleLadder.rungs || [];
+                    for (const rung of rungs) {
+                        const tr = document.createElement('tr');
+                        const benched = (rung.samples >= 3) && (rung.pass_rate < 0.5);
+                        if (benched) tr.classList.add('benched');
+                        const priceLabel = (!rung.price_per_mtok || rung.price_per_mtok === 0) ? 'free' : rung.price_per_mtok.toFixed(2);
+                        const passPct = ((rung.pass_rate || 0) * 100).toFixed(1) + '%';
+                        const currentMarker = rung.picked ? ' <span class="ladder-current">◀ current</span>' : '';
+                        tr.innerHTML = `
+                        <td class="model-cell">${rung.model}${currentMarker}</td>
+                        <td>${priceLabel}</td>
+                        <td>${rung.samples}</td>
+                        <td>${passPct}</td>
+                        <td>${formatCurrency(rung.avg_cost)}</td>
+                        <td>${rung.effective_cost === 0 ? 'free' : formatCurrency(rung.effective_cost)}${rung.samples > 0 && rung.avg_cost > 0 ? '' : ' <span class="est-tag">est</span>'}</td>
+                    `;
+                        tbody.appendChild(tr);
+                    }
+                    table.appendChild(tbody);
+                    block.appendChild(table);
+                    this.elements.ladderTables.appendChild(block);
+                }
+
+                this.elements.ladderContainer.classList.remove('hidden');
+            },
+
+            renderChart(telemetry) {
+                // Draw a cumulative-cost-over-last-7-days line+area chart on #cost-chart.
+                const canvas = this.elements.chartCanvas;
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                const now = Date.now() / 1000;
+                const cutoff = now - 7 * 24 * 3600;
+                const points = (telemetry || [])
+                    .filter(r => typeof r.ts === 'number' && r.ts >= cutoff)
+                    .map(r => ({ ts: r.ts, cost: parseFloat(r.cost || 0) || 0 }))
+                    .sort((a, b) => a.ts - b.ts);
+
+                if (points.length === 0) {
+                    this.elements.chartEmpty.classList.remove('hidden');
+                    canvas.classList.add('hidden');
+                    this.elements.chartTotalValue.textContent = formatCurrency(0);
+                    this.elements.chartContainer.classList.remove('hidden');
+                    return;
+                }
+
+                this.elements.chartEmpty.classList.add('hidden');
+                canvas.classList.remove('hidden');
+
+                let cum = 0;
+                const cumPoints = points.map(p => { cum += p.cost; return { ts: p.ts, cum }; });
+                const total = cum;
+                this.elements.chartTotalValue.textContent = formatCurrency(total);
+
+                const w = canvas.width, h = canvas.height;
+                const padL = 60, padR = 20, padT = 20, padB = 30;
+                const plotW = w - padL - padR;
+                const plotH = h - padT - padB;
+
+                const minTs = cumPoints[0].ts;
+                const maxTs = Math.max(now, cumPoints[cumPoints.length - 1].ts);
+                const maxCum = Math.max(total, 0.0001);
+
+                const xFor = (ts) => padL + ((ts - minTs) / Math.max(maxTs - minTs, 1)) * plotW;
+                const yFor = (v) => padT + plotH - (v / maxCum) * plotH;
+
+                ctx.strokeStyle = '#30363d';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(padL, padT);
+                ctx.lineTo(padL, padT + plotH);
+                ctx.lineTo(padL + plotW, padT + plotH);
+                ctx.stroke();
+
+                ctx.fillStyle = '#8b949e';
+                ctx.font = '11px monospace';
+                ctx.textAlign = 'right';
+                ctx.fillText(formatCurrency(0), padL - 6, padT + plotH);
+                ctx.fillText(formatCurrency(maxCum), padL - 6, padT + 10);
+
+                ctx.strokeStyle = '#58a6ff';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                cumPoints.forEach((p, i) => {
+                    const x = xFor(p.ts), y = yFor(p.cum);
+                    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                });
+                ctx.lineTo(xFor(maxTs), yFor(total));
+                ctx.stroke();
+
+                ctx.lineTo(xFor(maxTs), padT + plotH);
+                ctx.lineTo(xFor(minTs), padT + plotH);
+                ctx.closePath();
+                ctx.fillStyle = 'rgba(88,166,255,0.15)';
+                ctx.fill();
+
+                this.elements.chartContainer.classList.remove('hidden');
+            },
+
+            setupAutoRefresh() {
+                // Auto-refresh is OFF by default; the checkbox in the header turns it on.
+                // Only overview data reloads (not the detail panel), every 10s.
+                this.autoRefreshTimer = null;
+                if (!this.elements.autoRefreshToggle) return;
+                this.elements.autoRefreshToggle.checked = false;
+                this.elements.autoRefreshToggle.addEventListener('change', (e) => {
+                    if (e.target.checked) {
+                        this.autoRefreshTimer = setInterval(() => this.refreshOverview(), 10000);
+                    } else if (this.autoRefreshTimer) {
+                        clearInterval(this.autoRefreshTimer);
+                        this.autoRefreshTimer = null;
+                    }
+                });
+            },
+
+            refreshOverview() {
+                // Reload the overview sections (runs/models/ratings/ladder/chart).
+                this.loadRuns();
+                this.loadModels();
+                this.loadRatings();
+                this.loadLadder();
+                this.loadChart();
+            }
+        };
+        
+        // Initialize when DOM is ready - start the application
+        document.addEventListener('DOMContentLoaded', () => {
+            app.init();
+        });
+    </script>
+</body>
+</html>
