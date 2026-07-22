@@ -372,17 +372,20 @@ func TestVerifierNoOpUnknownRepoNoFire(t *testing.T) {
 }
 
 // The router's candidate set is a COST ladder: sorted by list price ascending
-// with $0 :free models first — but free candidates exist ONLY for roles whose
-// outcomes are recorded (code/ask/cheap); plan/judge have no outcome recorder,
-// so a free rung there could never be escalated away from.
-func TestCandidateLadderCostAscendingFreeFirst(t *testing.T) {
+// over the PAID families (the weak :free tier was removed). No candidate is a
+// :free slug on any role.
+func TestCandidateLadderCostAscending(t *testing.T) {
 	d := testDeps(t, &fakeDoer{})
 	cands := d.candidateModelsForRole(RoleCode)
 	if len(cands) < 3 {
 		t.Fatalf("expected a multi-family ladder, got %v", cands)
 	}
-	if !strings.HasSuffix(cands[0], ":free") {
-		t.Errorf("cheapest rung must be the :free model, got %q", cands[0])
+	for _, role := range []Role{RoleCode, RoleAsk, RoleCheap, RolePlan} {
+		for _, m := range d.candidateModelsForRole(role) {
+			if strings.HasSuffix(m, ":free") {
+				t.Errorf("no :free candidate expected on role %s, got %q", role, m)
+			}
+		}
 	}
 	for i := 1; i < len(cands); i++ {
 		if llm.PriceRank(cands[i-1]) > llm.PriceRank(cands[i]) {
@@ -464,8 +467,8 @@ func TestLadderOrdersByObservedTaskCost(t *testing.T) {
 	if qi < 0 || gi < 0 || gi > qi {
 		t.Errorf("observed-cheaper glm must outrank observed-pricier qwen: glm@%d qwen@%d in %v", gi, qi, cands)
 	}
-	if !strings.HasSuffix(cands[0], ":free") {
-		t.Errorf("free rung must stay first, got %q", cands[0])
+	if strings.HasSuffix(cands[0], ":free") {
+		t.Errorf("no :free rung expected, got %q", cands[0])
 	}
 }
 
@@ -476,26 +479,19 @@ func TestBudgetDownshiftTrimsUnaffordableRungs(t *testing.T) {
 	d := testDeps(t, &fakeDoer{})
 	d.Rating = rating.Open("")
 	d.Routing = true
-	// Warm store: EVERY rung except kimi proven unreliable (cheap fails), kimi
-	// reliable at ~$0.05/task — the normal pick climbs to kimi.
-	for _, m := range d.candidateModelsForRole(RoleCode) {
-		for i := 0; i < 3; i++ {
-			if m == llm.ModelCoder {
-				d.Rating.Update("code", m, true, 0.05)
-			} else {
-				d.Rating.Update("code", m, false, 0.01)
-			}
-		}
+	// Warm store: kimi coder reliable at ~$0.05/task, so the normal pick is kimi;
+	// the cheapest paid rung is much cheaper per task.
+	cands := d.candidateModelsForRole(RoleCode)
+	cheapest := cands[0]
+	for i := 0; i < 3; i++ {
+		d.Rating.Update("code", llm.ModelCoder, true, 0.05)
+		d.Rating.Update("code", cheapest, true, 0.001) // reliable AND cheap
 	}
-	if got := d.pickModelWithBudget(RoleCode, ClassAny, llm.ModelCoder, "", nil); got != llm.ModelCoder {
-		t.Fatalf("without budget pressure the reliable rung should win, got %q", got)
-	}
-	// $0.10 cap, $0.08 spent → pressure 0.8, headroom $0.02: kimi (~$0.05/task)
-	// and every paid estimate are unaffordable — the pick degrades to the free rung.
+	// $0.10 cap, $0.099 spent → headroom $0.001: only the cheapest rung is affordable.
 	bud := budget.New(0, 0, 0.10, 0)
-	bud.Charge(0, 0.08)
-	if got := d.pickModelWithBudget(RoleCode, ClassAny, llm.ModelCoder, "", bud); got != llm.FreeCode {
-		t.Errorf("under pressure the pick should downshift to the free rung, got %q", got)
+	bud.Charge(0, 0.099)
+	if got := d.pickModelWithBudget(RoleCode, ClassAny, llm.ModelCoder, "", bud); got != cheapest {
+		t.Errorf("under pressure the pick should downshift to the cheapest affordable rung %q, got %q", cheapest, got)
 	}
 	// An explicit override is never downshifted.
 	if got := d.pickModelWithBudget(RoleCode, ClassAny, llm.ModelCoder, "x/pin", bud); got != "x/pin" {
@@ -514,7 +510,7 @@ func TestEstimatePlanCost(t *testing.T) {
 	d.Routes = RoutesFor(FamilyKimi)
 	// Warm one code model with a known per-task cost so the estimate is learned.
 	for i := 0; i < 3; i++ {
-		d.Rating.Update("code/codegen", llm.FreeCode, false, 0)     // bench the free rung (fine bucket)
+		d.Rating.Update("code/codegen", llm.MiniMaxCoder, false, 0) // bench a cheap rung (fine bucket)
 		d.Rating.Update("code/codegen", llm.ModelCoder, true, 0.02) // reliable at $0.02/task
 		d.Rating.Update("code", llm.ModelCoder, true, 0.02)         // warm coarse too (AvgCost source)
 	}

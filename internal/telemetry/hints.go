@@ -52,6 +52,6 @@ func Summary(records []Record) string {
 		cost += r.Cost
 	}
 	n := len(records)
-	return fmt.Sprintf("last %d runs: %d%% ok · avg %.1f steps · avg %d tok · ~$%.4f total",
-		n, ok*100/n, float64(steps)/float64(n), tokens/n, cost)
+	return fmt.Sprintf("last %d runs: %d%% ok · avg %.1f steps · avg %.1f tok · ~$%.4f total",
+		n, ok*100/n, float64(steps)/float64(n), float64(tokens)/float64(n), cost)
 }

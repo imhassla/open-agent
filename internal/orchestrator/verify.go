@@ -56,13 +56,15 @@ type Verdict struct {
 }
 
 // acceptanceResult runs the acceptance command once. timedOut distinguishes a
-// timeout (BashExec returns a non-nil error only on deadline) from a non-zero
-// exit (surfaced as an "exit error:" prefix) — the two are treated differently by
-// flake confirmation.
+// timeout from a non-zero exit (surfaced as an "exit error:" prefix) — the two are
+// treated differently by flake confirmation. BashExec returns a non-nil error on a
+// deadline timeout but ALSO on non-timeout setup failures (an empty command, or a
+// sandbox error like os.Getwd) — so only a genuine timeout, identified by its error
+// text, suppresses the rerun; other errors are stable failures on the normal path.
 func acceptanceResult(ctx context.Context, command string, timeoutSec int) (pass, timedOut bool, out string) {
 	out, err := tools.BashExec(ctx, command, timeoutSec)
 	if err != nil {
-		return false, true, out // timeout
+		return false, strings.Contains(err.Error(), "timed out"), out
 	}
 	return !strings.HasPrefix(out, "exit error:"), false, out
 }

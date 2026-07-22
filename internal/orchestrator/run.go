@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/imhassla/open-agent/internal/agent"
 	"github.com/imhassla/open-agent/internal/budget"
@@ -145,7 +146,13 @@ func boundedSummary(s string) string {
 	if len(s) <= max {
 		return s
 	}
-	return s[:max] + "\n…[truncated — call read_artifact for the full output]"
+	// Back off to a UTF-8 rune boundary so truncation never splits a multi-byte
+	// character into invalid bytes in the downstream task prompt this feeds.
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "\n…[truncated — call read_artifact for the full output]"
 }
 
 // isAdvisoryRole reports whether a role's output is ADVISORY (investigation/context)

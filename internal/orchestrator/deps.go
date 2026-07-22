@@ -62,18 +62,13 @@ func (d *Deps) singleFamily() bool {
 	return d.PinFamily
 }
 
-// freeExtras are $0 ":free" catalog models injected into the router's candidate
-// ladder — ONLY for roles whose outcomes are actually recorded (code via the
-// execution gate, ask/cheap via the critic), so the ladder can learn to escalate
-// away from them. Un-recorded roles (plan/judge) must NOT get free candidates: a
-// cost-ladder with no outcome signal would just pin them to the cheapest model
-// forever.
-var freeExtras = map[Role][]string{
-	RoleCode:  {llm.FreeCode},
-	RoleAsk:   {llm.FreeAsk},
-	RoleCheap: {llm.FreeCheap},
-	RolePlan:  {llm.FreePlan}, // recordable since RecordPlanOutcome (whole-run signal)
-}
+// freeExtras injected $0 ":free" catalog models into the ladder. Removed: field
+// experiments showed the free tier is too weak for real work (it wrote a
+// semantically-wrong test and misread subtle semantics), so the extra ladder
+// width and the cold-start failures it caused were not worth it. The ladder now
+// starts from the paid families' models (a :free slug can still be forced with
+// -m for throwaway/mechanical work). Kept as an empty map so callers are unchanged.
+var freeExtras = map[Role][]string{}
 
 // assumedTaskTokens scales a per-token LIST price into a per-task cost estimate
 // comparable with a bucket's observed AvgCost, for rungs that have never been

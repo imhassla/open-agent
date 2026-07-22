@@ -30,6 +30,7 @@ type Agent struct {
 	StreamOut    io.Writer      // where streamed text goes (nil = os.Stderr)
 	Emit         event.Emitter  // optional structured-event sink (nil = discard)
 	Budget       *budget.Budget // optional shared run budget (nil = derive from MaxSteps)
+	JSONObject   bool           // force response_format=json_object (provider-enforced valid JSON; used by tool-free finalizers)
 
 	// RequireApply makes the loop refuse to "complete" a task that GENERATED code
 	// without WRITING it: set true only for code workers (by BuildWorker). When the
@@ -153,7 +154,7 @@ func (a *Agent) Send(ctx context.Context, userInput string) (*Result, error) {
 	a.editsApplied = 0
 	a.StepsTaken = 0
 
-	opts := llm.ChatOptions{Model: a.Model, Tools: a.Registry.Defs(), MaxTokens: 8192}
+	opts := llm.ChatOptions{Model: a.Model, Tools: a.Registry.Defs(), MaxTokens: 8192, JSONObject: a.JSONObject}
 
 	bud := a.Budget
 	if bud == nil {

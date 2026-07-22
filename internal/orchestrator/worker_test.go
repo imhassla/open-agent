@@ -115,10 +115,10 @@ func TestCandidateModelsForRole(t *testing.T) {
 	if len(cands) < 2 {
 		t.Fatalf("expected several candidates, got %v", cands)
 	}
-	// The ladder is cost-ascending with the :free rung first (the active family
+	// The ladder is cost-ascending over paid families (the active family
 	// no longer leads — it survives only as the cold-start prior).
-	if !strings.HasSuffix(cands[0], ":free") {
-		t.Errorf("cheapest (:free) rung must be first: got %q", cands[0])
+	if strings.HasSuffix(cands[0], ":free") {
+		t.Errorf("no :free rung expected on the paid ladder, got %q", cands[0])
 	}
 	// No duplicates.
 	seen := map[string]bool{}

@@ -184,6 +184,14 @@ func main() {
 		return
 	}
 
+	// `self-review` — open-agent reviews its OWN code with a verified pipeline
+	// (reviewer → adversarial verification → report). The positional after the
+	// verb is an optional focus path (e.g. internal/rating).
+	if cmd == "self-review" {
+		runSelfReview(deps, opts, task)
+		return
+	}
+
 	// Unified interactive session (#18). Everything that isn't a reserved tooling
 	// subcommand (models/version/runs/replay/bench/do, handled above) lands here.
 	switch cmd {
@@ -566,6 +574,8 @@ Commands:
   runs      List recorded do-runs (tasks, steps, cost) newest first
   replay    Replay a run's event trace + cache-hit summary: replay <run-id>
   dashboard Local web observability over ~/.open-agent (--port, default 8787)
+  self-review  Review this codebase for real defects (verified: reviewer + adversarial
+            verification); optional focus path, e.g. self-review internal/rating
   sandbox   Run the agent as ROOT in a hardened throwaway container (isolated
             multi-environment sessions); see: open-agent sandbox
   dashboard Serve a local web dashboard over ~/.open-agent (runs, telemetry, ratings)
