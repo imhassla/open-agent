@@ -4,7 +4,7 @@ A fast, single-binary agentic CLI for **coding and automation**, powered by open
 models through [OpenRouter](https://openrouter.ai). Written in Go.
 
 Its defining feature is a **cost-ladder router**: per task class, open-agent tries the
-cheapest adequate model first and escalates to a pricier one only when the *learned*
+cheapest adequate model first and escalates to a pricier one only when the _learned_
 pass-rate proves the cheap one inadequate — so routine work runs on free/cheap models and
 only genuinely hard tasks reach expensive ones. It learns which model is "minimally
 sufficient" for each kind of task from an execution-grounded verification gate, and shows
@@ -29,12 +29,20 @@ you the whole thing in a built-in dashboard.
 ## Install
 
 ```sh
+# GitHub Release binaries (darwin_arm64, linux_amd64)
+ARCH=darwin_arm64   # or: linux_amd64
+gh release download -R imhassla/open-agent -p "*${ARCH}*" -D /tmp/oa
+tar -xzf /tmp/oa/open-agent_*_${ARCH}.tar.gz -C /tmp/oa
+sudo install -m 755 /tmp/oa/open-agent_*/open-agent /usr/local/bin/open-agent
+
+# or build from source
 make install                     # builds + installs (single binary)
 # or: go install github.com/imhassla/open-agent@latest
-# or: go build -o open-agent .   &&   put it on your PATH
 
 make install-treesitter          # optional: richer multi-language repo_map (CGo tree-sitter)
 ```
+
+Releases are built by CI on version tags: `git tag v0.1.0 && git push origin v0.1.0`.
 
 Set your OpenRouter key (first match wins): `OPENROUTER_KEY` env var, a `.env` in the
 working directory, or `~/.config/open-agent/.env`. See `.env.example`.
@@ -65,7 +73,7 @@ policy, sandbox recipes).
 ## The cost-ladder router
 
 Every role's candidate set is all families' models for that role **plus** `:free` catalog
-variants, ordered by *observed per-task cost* (list price for cold rungs). For each
+variants, ordered by _observed per-task cost_ (list price for cold rungs). For each
 `(role, task-class)` bucket the router:
 
 - tries the cheapest **unproven** rung first, stops at the cheapest **proven-reliable**
@@ -80,15 +88,15 @@ Watch it live in `open-agent dashboard` → Router ladder.
 
 ## Commands & roles
 
-| Command    | Purpose                          |
-|------------|----------------------------------|
-| `code`     | autonomous coding agent (cwd)    |
-| `ask`      | one-shot chat, no tools          |
-| `research` | read-only web research (grounded, cited search) |
-| `do`       | plan → parallel multi-model DAG → verify |
-| `sandbox`  | run as root in a hardened box    |
-| `dashboard`| local observability web UI       |
-| `models` / `runs` / `replay` / `bench` | introspection & self-eval |
+| Command                                | Purpose                                         |
+| -------------------------------------- | ----------------------------------------------- |
+| `code`                                 | autonomous coding agent (cwd)                   |
+| `ask`                                  | one-shot chat, no tools                         |
+| `research`                             | read-only web research (grounded, cited search) |
+| `do`                                   | plan → parallel multi-model DAG → verify        |
+| `sandbox`                              | run as root in a hardened box                   |
+| `dashboard`                            | local observability web UI                      |
+| `models` / `runs` / `replay` / `bench` | introspection & self-eval                       |
 
 Model families: `kimi`, `glm`, `google`, `grok`, `deepseek`, `qwen`, `minimax`, `mistral`
 (the family is the router's cold-start prior; the ladder learns from there). `:free`
@@ -108,7 +116,7 @@ inputs/goals you trust, or isolate it:
 
 - `--sandbox` runs `bash` and verification in a network-isolated, resource-capped Docker
   container.
-- `open-agent sandbox …` runs the *whole agent* as root inside a hardened, throwaway
+- `open-agent sandbox …` runs the _whole agent_ as root inside a hardened, throwaway
   container that is isolated from the host: no `--privileged`, no host bind mounts, no
   Docker socket, no host namespaces, default seccomp/AppArmor kept, escape-prone
   capabilities dropped, pids/memory/cpu capped, ephemeral by default. Egress is selectable
