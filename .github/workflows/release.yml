@@ -1,0 +1,61 @@
+# Build and publish release assets on version tags (v*).
+# Usage:
+#   git tag v0.1.0 && git push origin v0.1.0
+# Watch: gh run watch
+# Assets: gh release view v0.1.0
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build release binaries
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          : > dist/checksums.txt
+
+          build() {
+            local goos="$1" goarch="$2"
+            local stage="open-agent_${VERSION}_${goos}_${goarch}"
+
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+              go build -trimpath -ldflags="-s -w" -o open-agent .
+
+            mkdir -p "dist/${stage}"
+            cp open-agent README.md LICENSE "dist/${stage}/"
+            tar -C dist -czf "dist/${stage}.tar.gz" "${stage}"
+            (cd dist && sha256sum "${stage}.tar.gz" >> checksums.txt)
+            echo "Built dist/${stage}.tar.gz"
+          }
+
+          build darwin arm64
+          build linux amd64
+
+          cat dist/checksums.txt
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/checksums.txt
