@@ -332,23 +332,22 @@ type streamChunk struct {
 		FinishReason *string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage *Usage `json:"usage"`
+	Model string `json:"model"` // actual model from server (OpenRouter may route differently)
 }
 
 // ChatStream performs a streaming request, invoking onText for each text delta,
 // and returns the fully assembled response. Retries cover connection setup; an
-// error mid-stream is returned as-is.
+// error mid-stream is returned as-is. The concurrency slot is acquired per
+// attempt (inside the retry loop), not for the whole call, so backoff sleeps
+// don't occupy a slot and starve healthy requests.
 func (c *Client) ChatStream(ctx context.Context, msgs []Message, opt ChatOptions, onText StreamHandler) (*Response, error) {
-	if err := c.acquire(ctx); err != nil {
-		return nil, err
-	}
-	defer c.release()
-
 	body, err := c.body(msgs, opt, true)
 	if err != nil {
 		return nil, err
 	}
 
 	var resp *http.Response
+	var stream io.Reader // buffered reader over resp.Body (first byte already peeked)
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
@@ -356,18 +355,25 @@ func (c *Client) ChatStream(ctx context.Context, msgs []Message, opt ChatOptions
 				return nil, ctx.Err()
 			}
 		}
+		// Acquire slot per attempt so backoff sleeps don't hold it.
+		if err := c.acquire(ctx); err != nil {
+			return nil, err
+		}
 		req, err := c.newRequest(ctx, body, true)
 		if err != nil {
+			c.release()
 			return nil, err
 		}
 		r, err := c.HTTP.Do(req)
 		if err != nil {
+			c.release()
 			lastErr = err
 			continue
 		}
 		if r.StatusCode != http.StatusOK {
 			data, _ := io.ReadAll(r.Body)
 			r.Body.Close()
+			c.release()
 			ae := classify(r.StatusCode, r.Header, data)
 			ae.Model = opt.Model
 			if !ae.Retryable() {
@@ -376,20 +382,35 @@ func (c *Client) ChatStream(ctx context.Context, msgs []Message, opt ChatOptions
 			lastErr = ae
 			continue
 		}
+		// A 200 that ends before its first byte (empty body) is a provider hiccup,
+		// not a protocol error — retry it instead of returning garbage. Peek(1)
+		// blocks only until the FIRST byte, so live streaming latency is
+		// untouched (a whole-body read here would silently turn streaming into
+		// buffered replay).
+		br := bufio.NewReader(r.Body)
+		if _, perr := br.Peek(1); perr != nil {
+			r.Body.Close()
+			c.release()
+			lastErr = &APIError{Kind: ErrServer, Status: 200, Model: opt.Model, Body: "empty response body"}
+			continue
+		}
+		stream = br
 		resp = r
-		break
+		break // slot stays held: like doChat, it covers the attempt's read too
 	}
 	if resp == nil {
 		return nil, fmt.Errorf("%s: stream failed after %d attempts: %w", opt.Model, maxRetries, lastErr)
 	}
 	defer resp.Body.Close()
+	defer c.release() // the successful attempt's slot, held through the stream read
 
 	var content strings.Builder
 	toolAcc := map[int]*ToolCall{}
 	var usage Usage
 	var finish string
+	model := opt.Model // actual model from server (may differ from request due to routing)
 
-	sc := bufio.NewScanner(resp.Body)
+	sc := bufio.NewScanner(stream)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for sc.Scan() {
 		line := sc.Text()
@@ -406,6 +427,10 @@ func (c *Client) ChatStream(ctx context.Context, msgs []Message, opt ChatOptions
 		var chunk streamChunk
 		if json.Unmarshal([]byte(payload), &chunk) != nil {
 			continue
+		}
+		// Capture model from first chunk that carries it (OpenRouter may route differently)
+		if chunk.Model != "" && model == opt.Model {
+			model = chunk.Model
 		}
 		if chunk.Usage != nil {
 			usage = *chunk.Usage
@@ -455,13 +480,13 @@ func (c *Client) ChatStream(ctx context.Context, msgs []Message, opt ChatOptions
 		Message:      Message{Role: "assistant", Content: content.String(), ToolCalls: toolCalls},
 		FinishReason: finish,
 		Usage:        usage,
-		Model:        opt.Model,
+		Model:        model,
 	}
 
 	// On a mid-stream read error, return what was assembled so far alongside the
 	// error rather than discarding it — the caller can salvage the partial content.
 	if err := sc.Err(); err != nil {
-		return resp2, fmt.Errorf("%s: stream read (partial returned): %w", opt.Model, err)
+		return resp2, fmt.Errorf("%s: stream read (partial returned): %w", model, err)
 	}
 	return resp2, nil
 }

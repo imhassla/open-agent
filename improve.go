@@ -35,7 +35,15 @@ func runImprove(deps *orchestrator.Deps, opts options, focus string) {
 	defer cancel()
 	start := time.Now()
 
-	if st, err := tools.GitStatus("."); err != nil || (st != "" && st != "clean") {
+	// Porcelain git, not go-git: tools.GitStatus reports gitignored-but-present
+	// files (e.g. reports/) as untracked, which would falsely block improve on
+	// any repo that has ever run self-review. improve already shells out to git
+	// for the revert path, so the CLI dependency is not new.
+	// BashExec substitutes "(command produced no output)" for an empty stdout
+	// (a marker for model consumption) — for porcelain git that marker IS the
+	// clean signal.
+	if out, err := tools.BashExec(ctx, "git status --porcelain", 30); err != nil ||
+		(strings.TrimSpace(out) != "" && out != "(command produced no output)") {
 		fmt.Fprintln(os.Stderr, "improve requires a CLEAN git tree (each fix must be one reviewable, revertable diff); commit or stash first")
 		os.Exit(2)
 	}
