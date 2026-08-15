@@ -146,6 +146,8 @@ func replayRun(id string) {
 			continue
 		}
 		switch e.Kind {
+		case "plan":
+			fmt.Printf("  plan %s [%s] %s\n", e.TaskID, e.Model, e.Text)
 		case "step":
 			st.steps++
 			st.tokens += e.Tokens

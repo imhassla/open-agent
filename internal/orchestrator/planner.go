@@ -143,6 +143,7 @@ func MakePlanConsensus(ctx context.Context, d *Deps, goal string, k int, bud *bu
 	stamp := func(p *Plan) *Plan {
 		if p != nil {
 			p.PlanClass = string(planClass)
+			pruneRedundantTasks(p)
 		}
 		return p
 	}
@@ -384,6 +385,84 @@ func scorePlan(p *Plan) int {
 	}
 	return score
 }
+
+// pruneRedundantTasks removes non-terminal CODE tasks that only inspect or only
+// verify. The scoring penalty alone cannot stop these: when every consensus
+// candidate contains the chain, the least-bad plan still ships it. Field data
+// (bench fix-sum-bug, 3/3 runs): cheap planners open an atomic bugfix with an
+// "Inspect…/understand…" code task whose go-test acceptance can only pass by
+// DOING the fix — so the inspect worker fixes, the fix worker re-fixes, and the
+// run pays twice. Dependents of a pruned task inherit its deps (edge
+// contraction preserves acyclicity); the terminal task is never pruned.
+func pruneRedundantTasks(p *Plan) {
+	for {
+		removed := false
+		terminal := p.Terminal()
+		for i, t := range p.Tasks {
+			if t.ID == terminal || t.Role != RoleCode {
+				continue
+			}
+			if !isRedundantVerifyTask(t.Goal) && !isInvestigateOnlyTask(t.Goal) {
+				continue
+			}
+			pruned := t
+			p.Tasks = append(p.Tasks[:i], p.Tasks[i+1:]...)
+			for j := range p.Tasks {
+				p.Tasks[j].Deps = contractDeps(p.Tasks[j].Deps, pruned.ID, pruned.Deps)
+			}
+			removed = true
+			break // indices shifted — restart the scan
+		}
+		if !removed {
+			return
+		}
+	}
+}
+
+// contractDeps replaces removedID in deps with its own inherited deps, deduped.
+func contractDeps(deps []string, removedID string, inherited []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(id string) {
+		if id != removedID && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	for _, d := range deps {
+		if d == removedID {
+			for _, h := range inherited {
+				add(h)
+			}
+			continue
+		}
+		add(d)
+	}
+	return out
+}
+
+// isInvestigateOnlyTask reports whether a goal is pure reconnaissance — inspect/
+// analyze/understand with NO mutation verb. The fix worker re-reads the code
+// anyway, so a dedicated code-role inspect task only duplicates work (and gets
+// trapped by an acceptance it can never pass without doing the real change).
+func isInvestigateOnlyTask(goal string) bool {
+	g := strings.ToLower(goal)
+	investigate := false
+	for _, w := range []string{"inspect", "investigate", "analyze", "analyse", "understand", "examine", "diagnose", "identify", "look at", "review"} {
+		if strings.Contains(g, w) {
+			investigate = true
+			break
+		}
+	}
+	if !investigate {
+		return false
+	}
+	// Word-boundary verb forms, NOT substrings: "inspect the implementation" must
+	// prune, while "implement the function" must survive.
+	return !mutationVerbRe.MatchString(g)
+}
+
+var mutationVerbRe = regexp.MustCompile(`\b(fix(es|ed|ing)?|implement(s|ed|ing)?|add(s|ed|ing)?|write(s)?|wrote|writing|creat(e|es|ed|ing)|refactor(s|ed|ing)?|chang(e|es|ed|ing)|updat(e|es|ed|ing)|modif(y|ies|ied|ying)|remov(e|es|ed|ing)|delet(e|es|ed|ing)|renam(e|es|ed|ing)|appl(y|ies|ied|ying)|generat(e|es|ed|ing))\b`)
 
 // isRedundantVerifyTask reports whether a task's goal is essentially "run the
 // tests / check that it builds" — work the execution gate already does for every

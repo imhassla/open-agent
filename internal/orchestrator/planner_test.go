@@ -281,3 +281,57 @@ func TestPlanModelOverride(t *testing.T) {
 		t.Errorf("planner must use the pinned orchestrator model, got %q", cd.lastModel)
 	}
 }
+
+// pruneRedundantTasks: an investigate-only or verify-only non-terminal CODE task
+// is removed and its dependents inherit its deps; terminal tasks, mutation-verbed
+// goals, and non-code roles survive.
+func TestPruneRedundantTasks(t *testing.T) {
+	mk := func(tasks ...Task) *Plan { return &Plan{Goal: "g", Tasks: tasks} }
+
+	// Field-observed shape: inspect(code) -> fix(code). Collapses to the fix alone.
+	p := mk(
+		Task{ID: "t1", Role: RoleCode, Goal: "Inspect the current implementation of SumTo in sum.go and understand the bug by analyzing test failure"},
+		Task{ID: "t2", Role: RoleCode, Goal: "Fix the SumTo function in sum.go", Deps: []string{"t1"}},
+	)
+	pruneRedundantTasks(p)
+	if len(p.Tasks) != 1 || p.Tasks[0].ID != "t2" || len(p.Tasks[0].Deps) != 0 {
+		t.Fatalf("inspect chain not collapsed: %+v", p.Tasks)
+	}
+
+	// Chained inheritance: t0 -> t1(inspect) -> t2. t2 must inherit t0.
+	p = mk(
+		Task{ID: "t0", Role: RoleCode, Goal: "Fix the parser"},
+		Task{ID: "t1", Role: RoleCode, Goal: "Analyze the failing behavior", Deps: []string{"t0"}},
+		Task{ID: "t2", Role: RoleCode, Goal: "Implement the fallback", Deps: []string{"t1"}},
+	)
+	pruneRedundantTasks(p)
+	if len(p.Tasks) != 2 || p.Tasks[1].ID != "t2" || len(p.Tasks[1].Deps) != 1 || p.Tasks[1].Deps[0] != "t0" {
+		t.Fatalf("deps not inherited: %+v", p.Tasks)
+	}
+
+	// A verify-only middle task dies too.
+	p = mk(
+		Task{ID: "a", Role: RoleCode, Goal: "Implement Clamp"},
+		Task{ID: "b", Role: RoleCode, Goal: "Verify that the tests pass", Deps: []string{"a"}},
+		Task{ID: "c", Role: RoleCode, Goal: "Update the README usage section", Deps: []string{"b"}},
+	)
+	pruneRedundantTasks(p)
+	if len(p.Tasks) != 2 || p.Tasks[1].Deps[0] != "a" {
+		t.Fatalf("verify task survived: %+v", p.Tasks)
+	}
+
+	// Survivors: terminal investigate task; investigate+fix wording; research role.
+	p = mk(Task{ID: "only", Role: RoleCode, Goal: "Analyze the log output and report findings"})
+	pruneRedundantTasks(p)
+	if len(p.Tasks) != 1 {
+		t.Fatalf("terminal task pruned")
+	}
+	p = mk(
+		Task{ID: "r", Role: RoleResearch, Goal: "Investigate current Go release notes"},
+		Task{ID: "w", Role: RoleCode, Goal: "Review the diff and fix the regression", Deps: []string{"r"}},
+	)
+	pruneRedundantTasks(p)
+	if len(p.Tasks) != 2 {
+		t.Fatalf("non-code or mutation-verbed task wrongly pruned: %+v", p.Tasks)
+	}
+}

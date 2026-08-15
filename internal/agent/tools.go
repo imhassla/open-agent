@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"sort"
 
 	"github.com/imhassla/open-agent/internal/llm"
 )
@@ -61,6 +62,16 @@ func (r *Registry) Get(name string) (Tool, bool) {
 
 // Remove deletes tools by name (used to scope a role's capabilities, e.g. a
 // restricted worker).
+// Names returns the registered tool names, sorted — for the unknown-tool error.
+func (r *Registry) Names() []string {
+	out := make([]string, 0, len(r.tools))
+	for name := range r.tools {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (r *Registry) Remove(names ...string) {
 	for _, name := range names {
 		if _, ok := r.tools[name]; !ok {

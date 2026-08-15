@@ -232,6 +232,13 @@ func Run(ctx context.Context, d *Deps, p *Plan, bb *Blackboard, bud *budget.Budg
 	if concurrency < 1 {
 		concurrency = 4
 	}
+	// Trace the plan itself: task goals are the context every downstream event
+	// hangs off (a trace showing "t2 start…done" is undiagnosable without WHAT
+	// t2 was asked to do — this gap hid a duplicated-work plan defect).
+	for _, t := range p.Tasks {
+		d.Emit.Emit(event.Event{Kind: "plan", TaskID: t.ID, Model: string(t.Role),
+			Text: fmt.Sprintf("deps=%v acceptance=%q goal: %s", t.Deps, truncate(t.Acceptance, 80), truncate(t.Goal, 200))})
+	}
 	// One semaphore shared across the whole run (including any nested replans), so
 	// total live workers never exceeds Concurrency regardless of replan nesting.
 	sem := make(chan struct{}, concurrency)

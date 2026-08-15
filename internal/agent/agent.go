@@ -429,7 +429,12 @@ func (a *Agent) dispatch(ctx context.Context, tc llm.ToolCall) llm.Message {
 
 	tool, ok := a.Registry.Get(tc.Function.Name)
 	if !ok {
-		return reply(fmt.Sprintf("ERROR: unknown tool %q", tc.Function.Name))
+		// Name the real tools: models hallucinate plausible names (go_build) and
+		// a bare "unknown tool" costs a blind retry. Traced like any tool error.
+		msg := fmt.Sprintf("ERROR: unknown tool %q; available tools: %s", tc.Function.Name, strings.Join(a.Registry.Names(), ", "))
+		a.emit(event.Event{Kind: "toolres", TaskID: a.Label, Model: a.Model,
+			Text: tc.Function.Name + " ERROR: unknown tool"})
+		return reply(msg)
 	}
 
 	var args map[string]any
@@ -512,7 +517,9 @@ func (a *Agent) nudgeApply() {
 const applyNudgeText = "You have not written any change to disk yet — you only described or generated code. " +
 	"A task is NOT complete until the change is on disk: apply it now with edit_file (preferred) or write_file. " +
 	"Do NOT re-run code_consensus — apply the code you already produced. " +
-	"(A code task that changes nothing is rejected by its verification, so an edit is required.)"
+	"EXCEPTION: if you have VERIFIED the goal is already satisfied (the required change exists and the tests/" +
+	"acceptance pass), call final_answer saying exactly that — NEVER revert, delete, or redo existing working " +
+	"code just to have something to write."
 
 func finalAnswer(calls []llm.ToolCall) (string, bool) {
 	for _, tc := range calls {
