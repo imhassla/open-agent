@@ -187,6 +187,27 @@ func timeoutOr(sec int) int {
 // full Go suite) + the advisory test-tampering guard + the flaky/pass terminal. gate
 // labels the originating verifier on every returned Verdict.
 func postChangeTail(ctx context.Context, t Task, repoRoot string, to int, flaky bool, gate string) Verdict {
+	// Shadow-subpackage gate (BLOCKING): a new same-named subpackage passes its
+	// own tests while the real package stays unchanged — the write_file guard
+	// covers the tool path, but workers also create these via bash heredocs, so
+	// the verifier is the route-proof chokepoint. Only dirs the task actually
+	// touched (git-dirty) are flagged, so a pre-existing oddity never blocks.
+	if shadows := tools.FindShadowPackages(repoRoot); len(shadows) > 0 {
+		if st, gerr := tools.GitStatus(repoRoot); gerr == nil && st != "" && st != "clean" {
+			var touched []string
+			for _, s := range shadows {
+				dir := strings.SplitN(s, " ", 2)[0]
+				if strings.Contains(st, dir) {
+					touched = append(touched, s)
+				}
+			}
+			if len(touched) > 0 {
+				return Verdict{Pass: false, Gate: gate, Feedback: "you created a SUBDIRECTORY whose Go package shadows the existing package: " +
+					strings.Join(touched, "; ") + ". The real package is unchanged — move your new code into the parent directory's " +
+					"package files (next to the existing ones) and DELETE the subdirectory."}
+			}
+		}
+	}
 	if !isFullGoSuite(t.Acceptance) {
 		if regressed, ran := tools.RegressionCheck(ctx, repoRoot, to); ran && len(regressed) > 0 {
 			return Verdict{Pass: false, Gate: gate, Feedback: fmt.Sprintf("your change REGRESSED %d previously-passing test(s): %s. "+

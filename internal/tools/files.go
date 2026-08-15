@@ -61,6 +61,53 @@ func checkShadowPackage(path, content string) error {
 	return nil
 }
 
+// FindShadowPackages reports directories under root whose Go package clause
+// duplicates an ANCESTOR directory's package — the shadow-subpackage trap in
+// after-the-fact form. The write_file guard blocks the tool path, but workers
+// also create these via bash heredocs; the verifier calls this to catch every
+// route. Returned entries look like "bench (package bench shadows .)".
+func FindShadowPackages(root string) []string {
+	pkgOf := map[string]string{} // dir → package name (from its first parsable .go file)
+	var dirs []string
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || !d.IsDir() {
+			return nil
+		}
+		n := d.Name()
+		if p != root && (n == ".git" || n == "node_modules" || n == "vendor" || strings.HasPrefix(n, ".")) {
+			return filepath.SkipDir
+		}
+		files, _ := filepath.Glob(filepath.Join(p, "*.go"))
+		for _, f := range files {
+			src, rerr := os.ReadFile(f)
+			if rerr != nil {
+				continue
+			}
+			if pkg := goPackageClause(string(src)); pkg != "" && pkg != "main" {
+				pkgOf[p] = pkg
+				dirs = append(dirs, p)
+				break
+			}
+		}
+		return nil
+	})
+	var out []string
+	for _, dir := range dirs {
+		for up := filepath.Dir(dir); len(up) >= len(root); up = filepath.Dir(up) {
+			if anc, ok := pkgOf[up]; ok && anc == pkgOf[dir] && up != dir {
+				rel, _ := filepath.Rel(root, dir)
+				relUp, _ := filepath.Rel(root, up)
+				out = append(out, fmt.Sprintf("%s (package %s shadows %s)", rel, pkgOf[dir], relUp))
+				break
+			}
+			if up == root {
+				break
+			}
+		}
+	}
+	return out
+}
+
 // resolveNear recovers from a mis-pathed file reference — models routinely glue a
 // Go import path or module prefix onto a filename ("oalab/pipeline/pipeline.go"
 // for "./pipeline.go"), and each ENOENT otherwise costs a full model round-trip.

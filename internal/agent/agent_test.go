@@ -502,3 +502,24 @@ func TestMaxTokensClampedToCostHeadroom(t *testing.T) {
 		t.Errorf("cost-clamped max_tokens = %v, want ~2923", got)
 	}
 }
+
+// noteRepeat flags only byte-identical repeats: same call+result gets the
+// warning, a changed result (tests after an edit) stays clean.
+func TestNoteRepeat(t *testing.T) {
+	a := &Agent{}
+	if got := a.noteRepeat("glob", `{"pattern":"*.go"}`, "a.go"); strings.Contains(got, "[note:") {
+		t.Fatalf("first call flagged: %q", got)
+	}
+	if got := a.noteRepeat("glob", `{"pattern":"*.go"}`, "a.go"); !strings.Contains(got, "do not repeat") {
+		t.Fatalf("identical repeat not flagged: %q", got)
+	}
+	if got := a.noteRepeat("glob", `{"pattern":"*.go"}`, "a.go"); !strings.Contains(got, "suppressed") || strings.Contains(got, "a.go") {
+		t.Fatalf("second repeat not suppressed: %q", got)
+	}
+	if got := a.noteRepeat("glob", `{"pattern":"*.go"}`, "a.go\nb.go"); strings.Contains(got, "[note:") || strings.Contains(got, "suppressed") {
+		t.Fatalf("changed result wrongly flagged: %q", got)
+	}
+	if got := a.noteRepeat("bash", `{"command":"go test"}`, "a.go"); strings.Contains(got, "[note:") {
+		t.Fatalf("different tool wrongly flagged: %q", got)
+	}
+}

@@ -342,3 +342,25 @@ func TestWriteFileShadowPackageGuard(t *testing.T) {
 		t.Fatalf("non-Go blocked: %v", err)
 	}
 }
+
+// FindShadowPackages: after-the-fact detection for shadow subpackages created
+// by ANY route (bash heredocs bypass the write_file guard).
+func TestFindShadowPackages(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "base.go"), "package bench\n")
+	writeFile(t, filepath.Join(dir, "bench", "clamp.go"), "package bench\n")
+	writeFile(t, filepath.Join(dir, "util", "u.go"), "package util\n")
+	writeFile(t, filepath.Join(dir, "cmd", "m.go"), "package main\n")
+
+	got := FindShadowPackages(dir)
+	if len(got) != 1 || !strings.Contains(got[0], "bench (package bench shadows") {
+		t.Fatalf("got %v", got)
+	}
+	// Clean tree: no findings.
+	clean := t.TempDir()
+	writeFile(t, filepath.Join(clean, "a.go"), "package top\n")
+	writeFile(t, filepath.Join(clean, "sub", "b.go"), "package sub\n")
+	if got := FindShadowPackages(clean); len(got) != 0 {
+		t.Fatalf("false positive: %v", got)
+	}
+}

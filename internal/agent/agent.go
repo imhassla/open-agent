@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"os"
 	"sort"
@@ -48,9 +49,11 @@ type Agent struct {
 	msgs         []llm.Message // persistent conversation history (multi-turn)
 	applied      bool          // RequireApply: a mutating tool succeeded this Send (per-worker, unambiguous)
 	applyNudges  int           // RequireApply: nudges issued this Send (bounded by maxApplyNudges)
-	emptyNudges  int           // empty-answer re-prompts issued this Send (bounded to 1)
-	poisonNudges int           // poisoned-tool-call recoveries this Send (bounded to 1)
-	editsApplied int           // successful mutating tool calls this Send (envelope observability)
+	repeatMu     sync.Mutex
+	repeats      map[string]repeatRec // (tool+args) → last result fingerprint (loop-wander guard)
+	emptyNudges  int                  // empty-answer re-prompts issued this Send (bounded to 1)
+	poisonNudges int                  // poisoned-tool-call recoveries this Send (bounded to 1)
+	editsApplied int                  // successful mutating tool calls this Send (envelope observability)
 
 	// StepsTaken counts loop iterations of the LAST Send, surviving a fatal error
 	// (a nil Result) — so telemetry records how far a dead run actually got instead
@@ -118,6 +121,9 @@ func (a *Agent) Reset() {
 	a.applied = false
 	a.applyNudges = 0
 	a.emptyNudges = 0
+	a.repeatMu.Lock()
+	a.repeats = nil // a fresh session has no earlier calls to be "repeats" of
+	a.repeatMu.Unlock()
 }
 
 func (a *Agent) streamOut() io.Writer {
@@ -450,12 +456,52 @@ func (a *Agent) dispatch(ctx context.Context, tc llm.ToolCall) llm.Message {
 		// (truncated) so replay shows WHY a worker burned steps.
 		a.emit(event.Event{Kind: "toolres", TaskID: a.Label, Model: a.Model,
 			Text: tc.Function.Name + " ERROR: " + truncate(err.Error(), 160)})
-		return reply(fmt.Sprintf("ERROR: %v", err))
+		return reply(a.noteRepeat(tc.Function.Name, tc.Function.Arguments, fmt.Sprintf("ERROR: %v", err)))
 	}
 	// Result size feeds token-bloat diagnosis (an oversized read shows up here).
 	a.emit(event.Event{Kind: "toolres", TaskID: a.Label, Model: a.Model,
 		Text: fmt.Sprintf("%s ok %dch", tc.Function.Name, len(res))})
-	return reply(res)
+	return reply(a.noteRepeat(tc.Function.Name, tc.Function.Arguments, res))
+}
+
+// repeatRec remembers one (tool, args) call's result fingerprint, the step it
+// was last seen, and how many identical repeats have occurred.
+type repeatRec struct {
+	sum     uint64
+	step    int
+	repeats int
+}
+
+// noteRepeat handles byte-identical repeats of an earlier call: traces show
+// cheap workers re-running the same glob/run_tests up to 5× in one run, paying
+// a full model round-trip each time to relearn an unchanged result. First
+// repeat gets an advisory note; from the second repeat on, the duplicated
+// payload is SUPPRESSED entirely — an advisory alone did not break the loop in
+// the field, and re-sending an unchanged payload both feeds the loop and bloats
+// the context. Only literally-unchanged results are touched: re-running tests
+// after an edit yields new output, a fresh fingerprint, and a clean pass-through.
+func (a *Agent) noteRepeat(name, rawArgs, res string) string {
+	h := fnv.New64a()
+	h.Write([]byte(res))
+	sum := h.Sum64()
+	key := name + "\x00" + rawArgs
+	a.repeatMu.Lock()
+	defer a.repeatMu.Unlock()
+	if a.repeats == nil {
+		a.repeats = map[string]repeatRec{}
+	}
+	prev, seen := a.repeats[key]
+	if !seen || prev.sum != sum {
+		a.repeats[key] = repeatRec{sum: sum, step: a.StepsTaken}
+		return res
+	}
+	rec := repeatRec{sum: sum, step: a.StepsTaken, repeats: prev.repeats + 1}
+	a.repeats[key] = rec
+	if rec.repeats == 1 {
+		return res + "\n[note: this exact call already returned this identical result — do not repeat it; act on the result you already have]"
+	}
+	return fmt.Sprintf("[identical result #%d suppressed — this exact call has returned the same output every time since step %d; NOTHING has changed. Stop repeating it and take a different action toward the goal.]",
+		rec.repeats+1, prev.step)
 }
 
 // argDigest compresses a tool call's raw JSON arguments into a short, readable
