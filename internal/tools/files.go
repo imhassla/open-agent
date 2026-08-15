@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -27,6 +28,9 @@ func goPackageClause(src string) string {
 // directory already holds that exact package. Legitimate new subpackages use a
 // name that doesn't shadow an ancestor, so they pass untouched.
 func checkShadowPackage(path, content string) error {
+	if strings.HasSuffix(path, ".py") {
+		return checkPyShadow(path)
+	}
 	if !strings.HasSuffix(path, ".go") {
 		return nil
 	}
@@ -61,21 +65,60 @@ func checkShadowPackage(path, content string) error {
 	return nil
 }
 
-// FindShadowPackages reports directories under root whose Go package clause
-// duplicates an ANCESTOR directory's package — the shadow-subpackage trap in
-// after-the-fact form. The write_file guard blocks the tool path, but workers
-// also create these via bash heredocs; the verifier calls this to catch every
-// route. Returned entries look like "bench (package bench shadows .)".
+// checkPyShadow blocks the Python translations of the shadow trap, all of them
+// SAME-DIRECTORY collisions (where Python import resolution actually becomes
+// ambiguous): writing X.py beside an existing package dir X/, writing into a
+// fresh dir X/ beside an existing module X.py, and nesting pkg/pkg/.
+func checkPyShadow(path string) error {
+	dir := filepath.Dir(path)
+	base := strings.TrimSuffix(filepath.Base(path), ".py")
+	// X.py beside package dir X/ (dir already holds Python code).
+	if pys, _ := filepath.Glob(filepath.Join(dir, base, "*.py")); len(pys) > 0 {
+		return fmt.Errorf("package directory %s already exists — add your code inside it (e.g. %s), not as a sibling module %s that shadows the package on import",
+			filepath.Join(dir, base), filepath.Join(dir, base, "<file>.py"), filepath.Base(path))
+	}
+	// The remaining cases only apply to a FRESH directory (no .py files yet).
+	if existing, _ := filepath.Glob(filepath.Join(dir, "*.py")); len(existing) > 0 {
+		return nil
+	}
+	name := filepath.Base(dir)
+	parent := filepath.Dir(dir)
+	// Fresh dir X/ beside module X.py.
+	if _, err := os.Stat(filepath.Join(parent, name+".py")); err == nil {
+		return fmt.Errorf("module %s.py already exists in %s — add your code to that module (or restructure it explicitly); a new %s/ directory would shadow it on import",
+			name, parent, name)
+	}
+	// Nested pkg/pkg/: parent dir has the same basename and already holds code.
+	if filepath.Base(parent) == name {
+		if pys, _ := filepath.Glob(filepath.Join(parent, "*.py")); len(pys) > 0 {
+			return fmt.Errorf("directory %s is already package %q — write your file THERE, not in a nested same-named %s/ subpackage",
+				parent, name, name)
+		}
+	}
+	return nil
+}
+
+// FindShadowPackages reports shadow-package collisions under root, after the
+// fact — the write_file guard blocks the tool path, but workers also create
+// these via bash heredocs; the verifier calls this to catch every route.
+// Go: a directory whose package clause duplicates an ANCESTOR's package.
+// Python (same-directory collisions, where imports actually go ambiguous):
+// module X.py beside package dir X/, and nested same-named pkg/pkg/.
+// Returned entries look like "bench (package bench shadows .)".
 func FindShadowPackages(root string) []string {
-	pkgOf := map[string]string{} // dir → package name (from its first parsable .go file)
+	pkgOf := map[string]string{} // dir → Go package name (from its first parsable .go file)
+	pyDirs := map[string]bool{}  // dirs containing .py files
 	var dirs []string
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || !d.IsDir() {
 			return nil
 		}
 		n := d.Name()
-		if p != root && (n == ".git" || n == "node_modules" || n == "vendor" || strings.HasPrefix(n, ".")) {
+		if p != root && (n == ".git" || n == "node_modules" || n == "vendor" || n == "__pycache__" || strings.HasPrefix(n, ".")) {
 			return filepath.SkipDir
+		}
+		if pys, _ := filepath.Glob(filepath.Join(p, "*.py")); len(pys) > 0 {
+			pyDirs[p] = true
 		}
 		files, _ := filepath.Glob(filepath.Join(p, "*.go"))
 		for _, f := range files {
@@ -91,6 +134,25 @@ func FindShadowPackages(root string) []string {
 		}
 		return nil
 	})
+	var pyOut []string
+	for dir := range pyDirs {
+		// X.py beside package dir X/.
+		mods, _ := filepath.Glob(filepath.Join(dir, "*.py"))
+		for _, m := range mods {
+			base := strings.TrimSuffix(filepath.Base(m), ".py")
+			if pyDirs[filepath.Join(dir, base)] {
+				rel, _ := filepath.Rel(root, m)
+				pyOut = append(pyOut, fmt.Sprintf("%s (module shadows sibling package %s/)", rel, base))
+			}
+		}
+		// Nested same-named pkg/pkg/.
+		parent := filepath.Dir(dir)
+		if filepath.Base(parent) == filepath.Base(dir) && pyDirs[parent] {
+			rel, _ := filepath.Rel(root, dir)
+			pyOut = append(pyOut, fmt.Sprintf("%s (nested same-named Python package)", rel))
+		}
+	}
+	sort.Strings(pyOut)
 	var out []string
 	for _, dir := range dirs {
 		for up := filepath.Dir(dir); len(up) >= len(root); up = filepath.Dir(up) {
@@ -105,7 +167,7 @@ func FindShadowPackages(root string) []string {
 			}
 		}
 	}
-	return out
+	return append(out, pyOut...)
 }
 
 // resolveNear recovers from a mis-pathed file reference — models routinely glue a

@@ -364,3 +364,52 @@ func TestFindShadowPackages(t *testing.T) {
 		t.Fatalf("false positive: %v", got)
 	}
 }
+
+// Python shadow guard: same-directory collisions block on write; scanner finds
+// them after the fact; legitimate layouts pass.
+func TestPyShadowGuard(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "pkg", "__init__.py"), "")
+	writeFile(t, filepath.Join(dir, "pkg", "core.py"), "x = 1\n")
+	writeFile(t, filepath.Join(dir, "single.py"), "y = 2\n")
+
+	// X.py beside package dir X/.
+	if _, err := WriteFile(filepath.Join(dir, "pkg.py"), "z = 3\n"); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("module-beside-package not blocked: %v", err)
+	}
+	// Fresh dir X/ beside module X.py.
+	if _, err := WriteFile(filepath.Join(dir, "single", "extra.py"), "q = 4\n"); err == nil || !strings.Contains(err.Error(), "single.py already exists") {
+		t.Fatalf("dir-beside-module not blocked: %v", err)
+	}
+	// Nested pkg/pkg/.
+	if _, err := WriteFile(filepath.Join(dir, "pkg", "pkg", "sub.py"), "w = 5\n"); err == nil || !strings.Contains(err.Error(), "nested same-named") {
+		t.Fatalf("nested package not blocked: %v", err)
+	}
+	// Legitimate: new module in the package, and a distinct subpackage.
+	if _, err := WriteFile(filepath.Join(dir, "pkg", "util.py"), "a = 6\n"); err != nil {
+		t.Fatalf("legit module blocked: %v", err)
+	}
+	if _, err := WriteFile(filepath.Join(dir, "pkg", "sub", "impl.py"), "b = 7\n"); err != nil {
+		t.Fatalf("legit subpackage blocked: %v", err)
+	}
+}
+
+func TestFindShadowPackagesPython(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "pkg.py"), "")
+	writeFile(t, filepath.Join(dir, "pkg", "__init__.py"), "")
+	writeFile(t, filepath.Join(dir, "app", "app", "core.py"), "")
+	writeFile(t, filepath.Join(dir, "app", "main.py"), "")
+	writeFile(t, filepath.Join(dir, "ok", "sub", "m.py"), "")
+
+	got := strings.Join(FindShadowPackages(dir), "; ")
+	if !strings.Contains(got, "pkg.py (module shadows sibling package pkg/)") {
+		t.Fatalf("module/package collision missed: %q", got)
+	}
+	if !strings.Contains(got, "nested same-named Python package") {
+		t.Fatalf("nested package missed: %q", got)
+	}
+	if strings.Contains(got, "ok") {
+		t.Fatalf("false positive on legit layout: %q", got)
+	}
+}
