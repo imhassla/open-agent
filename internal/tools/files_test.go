@@ -309,3 +309,36 @@ func TestMisPathedFileResolution(t *testing.T) {
 		t.Fatalf("expected bare ENOENT, got %v", err)
 	}
 }
+
+// A new .go file in a FRESH subdirectory that shadows an ancestor's package must
+// be blocked (the shadow-subpackage trap); joining the existing directory, a
+// genuinely new package name, package main, and non-Go files all pass.
+func TestWriteFileShadowPackageGuard(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "base.go"), "package bench\n\nfunc Identity(x int) int { return x }\n")
+
+	// Shadowing: bench/clamp.go with package bench while ../base.go is package bench.
+	_, err := WriteFile(filepath.Join(dir, "bench", "clamp.go"), "package bench\n\nfunc Clamp(x, lo, hi int) int { return x }\n")
+	if err == nil || !strings.Contains(err.Error(), "already lives in") {
+		t.Fatalf("expected shadow-package error, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "bench")); !os.IsNotExist(statErr) {
+		t.Fatalf("guard still created the directory")
+	}
+
+	// Same directory: fine.
+	if _, err := WriteFile(filepath.Join(dir, "clamp.go"), "package bench\n\nfunc Clamp(x, lo, hi int) int { return x }\n"); err != nil {
+		t.Fatalf("same-dir write blocked: %v", err)
+	}
+	// Distinct subpackage name: fine.
+	if _, err := WriteFile(filepath.Join(dir, "util", "u.go"), "package util\n\nfunc U() {}\n"); err != nil {
+		t.Fatalf("legit subpackage blocked: %v", err)
+	}
+	// package main and non-Go files: never blocked.
+	if _, err := WriteFile(filepath.Join(dir, "cmd", "main.go"), "package main\n\nfunc main() {}\n"); err != nil {
+		t.Fatalf("package main blocked: %v", err)
+	}
+	if _, err := WriteFile(filepath.Join(dir, "docs", "bench.md"), "# notes\n"); err != nil {
+		t.Fatalf("non-Go blocked: %v", err)
+	}
+}

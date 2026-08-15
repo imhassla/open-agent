@@ -472,7 +472,14 @@ func argDigest(rawJSON string) string {
 		switch v := m[k].(type) {
 		case string:
 			if len(v) > 48 {
-				parts = append(parts, fmt.Sprintf("%s:%dch", k, len(v)))
+				// Identifying keys (paths, URLs, names) keep their TAIL — a
+				// trace showing "path:99ch" can't tell WHICH file was touched.
+				switch k {
+				case "path", "file", "url", "name", "pattern":
+					parts = append(parts, k+"=…"+v[len(v)-45:])
+				default:
+					parts = append(parts, fmt.Sprintf("%s:%dch", k, len(v)))
+				}
 			} else {
 				parts = append(parts, k+"="+v)
 			}

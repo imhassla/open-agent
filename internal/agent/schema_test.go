@@ -20,3 +20,17 @@ func TestToolSchemasNoNullRequired(t *testing.T) {
 		}
 	}
 }
+
+// Models substitute file/filename for the schema's "path" key; the alias reader
+// must accept them, prefer the canonical key, and never touch two-arg tools.
+func TestArgPathAliases(t *testing.T) {
+	if got := argPath(map[string]any{"file": "a.go"}, "path", "file", "filename", "filepath"); got != "a.go" {
+		t.Fatalf("file alias: %q", got)
+	}
+	if got := argPath(map[string]any{"path": "p.go", "file": "f.go"}, "path", "file"); got != "p.go" {
+		t.Fatalf("canonical key must win: %q", got)
+	}
+	if got := argPath(map[string]any{}, "path", "file"); got != "" {
+		t.Fatalf("empty: %q", got)
+	}
+}

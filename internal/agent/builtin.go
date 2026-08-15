@@ -52,9 +52,9 @@ func CoreTools() *Registry {
 		Handler: func(ctx context.Context, a map[string]any) (string, error) {
 			start, end := argInt(a, "start"), argInt(a, "end")
 			if start > 0 || end > 0 {
-				return tools.ReadFileLines(argStr(a, "path"), start, end)
+				return tools.ReadFileLines(argPath(a, "path", "file", "filename", "filepath"), start, end)
 			}
-			return tools.ReadFile(argStr(a, "path"), 0)
+			return tools.ReadFile(argPath(a, "path", "file", "filename", "filepath"), 0)
 		},
 	})
 
@@ -65,7 +65,7 @@ func CoreTools() *Registry {
 				"file prefer edit_file unless you intend a full rewrite.",
 			obj(props{"path": str("Path to write"), "content": str("Full file content")}, "path", "content")),
 		Handler: func(ctx context.Context, a map[string]any) (string, error) {
-			return tools.WriteFile(argStr(a, "path"), argStr(a, "content"))
+			return tools.WriteFile(argPath(a, "path", "file", "filename", "filepath"), argStr(a, "content"))
 		},
 	})
 
@@ -81,7 +81,7 @@ func CoreTools() *Registry {
 				"replace_all": boolean("Replace every occurrence (default false)"),
 			}, "path", "old_string", "new_string")),
 		Handler: func(ctx context.Context, a map[string]any) (string, error) {
-			return tools.EditFile(argStr(a, "path"), argStr(a, "old_string"), argStr(a, "new_string"), argBool(a, "replace_all"))
+			return tools.EditFile(argPath(a, "path", "file", "filename", "filepath"), argStr(a, "old_string"), argStr(a, "new_string"), argBool(a, "replace_all"))
 		},
 	})
 
@@ -135,7 +135,7 @@ func CoreTools() *Registry {
 				".go file or directory — an AST-accurate outline. Use to understand a Go file before editing.",
 			obj(props{"path": str("A .go file or directory")}, "path")),
 		Handler: func(ctx context.Context, a map[string]any) (string, error) {
-			return tools.GoSymbols(argStr(a, "path"))
+			return tools.GoSymbols(argPath(a, "path", "file", "filename", "filepath"))
 		},
 	})
 
@@ -166,7 +166,7 @@ func CoreTools() *Registry {
 				"new_source": str("The complete replacement function declaration"),
 			}, "path", "name", "new_source")),
 		Handler: func(ctx context.Context, a map[string]any) (string, error) {
-			return tools.ReplaceGoFunc(argStr(a, "path"), argStr(a, "name"), argStr(a, "new_source"))
+			return tools.ReplaceGoFunc(argPath(a, "path", "file", "filename", "filepath"), argStr(a, "name"), argStr(a, "new_source"))
 		},
 	})
 
@@ -183,7 +183,7 @@ func CoreTools() *Registry {
 				"write": boolean("Rewrite the file in place (default false)"),
 			}, "path")),
 		Handler: func(ctx context.Context, a map[string]any) (string, error) {
-			return tools.GoFmt(argStr(a, "path"), argBool(a, "write"))
+			return tools.GoFmt(argPath(a, "path", "file", "filename", "filepath"), argBool(a, "write"))
 		},
 	})
 
@@ -196,7 +196,7 @@ func CoreTools() *Registry {
 					"typescript-language-server/rust-analyzer). Compiler-grade truth, not heuristics.",
 				obj(props{"file": str("Path to the source file")}, "file")),
 			Handler: func(ctx context.Context, a map[string]any) (string, error) {
-				return tools.LSPDiagnostics(ctx, argStr(a, "file"))
+				return tools.LSPDiagnostics(ctx, argPath(a, "file", "path", "filename", "filepath"))
 			},
 		})
 
@@ -205,7 +205,7 @@ func CoreTools() *Registry {
 				"Type/signature/docs at a position (1-based line & column) via the language server.",
 				obj(props{"file": str("Source file"), "line": integer("1-based line"), "column": integer("1-based column")}, "file", "line", "column")),
 			Handler: func(ctx context.Context, a map[string]any) (string, error) {
-				return tools.LSPHover(ctx, argStr(a, "file"), argInt(a, "line"), argInt(a, "column"))
+				return tools.LSPHover(ctx, argPath(a, "file", "path", "filename", "filepath"), argInt(a, "line"), argInt(a, "column"))
 			},
 		})
 
@@ -214,7 +214,7 @@ func CoreTools() *Registry {
 				"Jump to the definition of the symbol at a position (1-based line & column).",
 				obj(props{"file": str("Source file"), "line": integer("1-based line"), "column": integer("1-based column")}, "file", "line", "column")),
 			Handler: func(ctx context.Context, a map[string]any) (string, error) {
-				return tools.LSPDefinition(ctx, argStr(a, "file"), argInt(a, "line"), argInt(a, "column"))
+				return tools.LSPDefinition(ctx, argPath(a, "file", "path", "filename", "filepath"), argInt(a, "line"), argInt(a, "column"))
 			},
 		})
 
@@ -223,7 +223,7 @@ func CoreTools() *Registry {
 				"Find all references to the symbol at a position (1-based line & column) — type-resolved.",
 				obj(props{"file": str("Source file"), "line": integer("1-based line"), "column": integer("1-based column")}, "file", "line", "column")),
 			Handler: func(ctx context.Context, a map[string]any) (string, error) {
-				return tools.LSPReferences(ctx, argStr(a, "file"), argInt(a, "line"), argInt(a, "column"))
+				return tools.LSPReferences(ctx, argPath(a, "file", "path", "filename", "filepath"), argInt(a, "line"), argInt(a, "column"))
 			},
 		})
 	}
@@ -344,6 +344,19 @@ func boolean(desc string) map[string]any {
 }
 func arr(desc string) map[string]any {
 	return map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": desc}
+}
+
+// argPath reads a single-file path argument accepting the schema key plus the
+// synonyms models substitute for it (file/filename/filepath) — a wrong key
+// otherwise becomes an empty path and a wasted ENOENT round-trip. NOT used for
+// tools taking BOTH a dir and a file (git_blame), where aliasing would misroute.
+func argPath(a map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if v := argStr(a, k); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func argStr(a map[string]any, key string) string {

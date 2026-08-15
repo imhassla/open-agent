@@ -145,6 +145,15 @@ func Run(ctx context.Context, deps *orchestrator.Deps, fix Fixture, lim Limits) 
 	// Ground truth: run the fixture's acceptance in the fixture dir (cwd).
 	out, aerr := tools.BashExec(ctx, fix.Acceptance, 120)
 	res.Passed = aerr == nil && !strings.HasPrefix(out, "exit error:")
+	if !res.Passed && res.Err == "" {
+		// The acceptance output IS the diagnosis of a failed cell (which hidden
+		// case broke, what didn't compile) — losing it made FAILs opaque.
+		msg := out
+		if aerr != nil {
+			msg = aerr.Error() + ": " + out
+		}
+		res.Err = "acceptance: " + msg
+	}
 	return res
 }
 

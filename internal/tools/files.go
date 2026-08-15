@@ -8,6 +8,59 @@ import (
 	"strings"
 )
 
+// goPackageClause extracts the package name from Go source ("" if none found).
+func goPackageClause(src string) string {
+	for _, line := range strings.SplitN(src, "\n", 60) {
+		line = strings.TrimSpace(line)
+		if rest, ok := strings.CutPrefix(line, "package "); ok {
+			return strings.TrimSpace(strings.SplitN(rest, "//", 2)[0])
+		}
+	}
+	return ""
+}
+
+// checkShadowPackage blocks a systematic cheap-model failure: told to add code
+// to "package foo", the worker creates a NEW subdirectory foo/ with the same
+// package clause — it compiles as its own subpackage, the real package stays
+// unchanged, and every consumer of the intended symbol breaks. Detect: a .go
+// file landing in a directory that has no Go files yet, while an ANCESTOR
+// directory already holds that exact package. Legitimate new subpackages use a
+// name that doesn't shadow an ancestor, so they pass untouched.
+func checkShadowPackage(path, content string) error {
+	if !strings.HasSuffix(path, ".go") {
+		return nil
+	}
+	pkg := goPackageClause(content)
+	if pkg == "" || pkg == "main" {
+		return nil
+	}
+	dir := filepath.Dir(path)
+	if existing, _ := filepath.Glob(filepath.Join(dir, "*.go")); len(existing) > 0 {
+		return nil // joining an established directory is always fine
+	}
+	// Walk up a few ancestors looking for the same package name.
+	up := dir
+	for i := 0; i < 6; i++ {
+		parent := filepath.Dir(up)
+		if parent == up {
+			break
+		}
+		up = parent
+		files, _ := filepath.Glob(filepath.Join(up, "*.go"))
+		for _, f := range files {
+			src, err := os.ReadFile(f)
+			if err != nil {
+				continue
+			}
+			if goPackageClause(string(src)) == pkg {
+				return fmt.Errorf("package %q already lives in %s (e.g. %s) — write your file THERE, next to the existing files, instead of creating the new directory %s; a same-named subpackage would compile separately and leave the real package unchanged",
+					pkg, up, filepath.Base(f), dir)
+			}
+		}
+	}
+	return nil
+}
+
 // resolveNear recovers from a mis-pathed file reference — models routinely glue a
 // Go import path or module prefix onto a filename ("oalab/pipeline/pipeline.go"
 // for "./pipeline.go"), and each ENOENT otherwise costs a full model round-trip.
@@ -231,6 +284,9 @@ func WriteFilePreview(path, content string) (before, after string, isNew bool, e
 
 // WriteFile writes content to path, creating parent directories and overwriting.
 func WriteFile(path, content string) (string, error) {
+	if err := checkShadowPackage(path, content); err != nil {
+		return "", err
+	}
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return "", err

@@ -181,7 +181,7 @@ func main() {
 
 	// `bench` — execution-grounded self-eval over built-in fixtures.
 	if cmd == "bench" {
-		runBench(deps, opts)
+		runBench(deps, opts, task)
 		return
 	}
 
