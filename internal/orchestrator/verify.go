@@ -182,6 +182,26 @@ func timeoutOr(sec int) int {
 	return sec
 }
 
+// statusTouchesDir reports whether the git status output st contains a change to
+// directory dir (exact match or subpath). The st format is "XY path" per line
+// (two status chars, space, repo-relative path). This avoids false positives from
+// substring matching (e.g., "bench" incorrectly matching "benchmark.go").
+func statusTouchesDir(st, dir string) bool {
+	for _, line := range strings.Split(st, "\n") {
+		// The emitter's format is exactly "XY path" — two status chars (either
+		// may itself be a space, e.g. " M x.go") then one space. Slice, don't
+		// Fields/TrimSpace: those mangle space-status lines and paths with spaces.
+		if len(line) < 4 {
+			continue
+		}
+		path := line[3:]
+		if path == dir || strings.HasPrefix(path, dir+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // postChangeTail is the change-side gate shared by both verifiers: PASS_TO_PASS
 // (don't break previously-passing tests, skipped when the acceptance is already a
 // full Go suite) + the advisory test-tampering guard + the flaky/pass terminal. gate
@@ -197,7 +217,7 @@ func postChangeTail(ctx context.Context, t Task, repoRoot string, to int, flaky 
 			var touched []string
 			for _, s := range shadows {
 				dir := strings.SplitN(s, " ", 2)[0]
-				if strings.Contains(st, dir) {
+				if statusTouchesDir(st, dir) {
 					touched = append(touched, s)
 				}
 			}

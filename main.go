@@ -234,7 +234,7 @@ func runOneShot(deps *orchestrator.Deps, role orchestrator.Role, task string, op
 		_ = os.WriteFile(filepath.Join(runDir, "meta.json"), meta, 0o644)
 	}
 	prevEmit := deps.Emit
-	sinks := []func(event.Event){event.JSONLSink(filepath.Join(runDir, "events.jsonl"))}
+	sinks := []func(event.Event){event.StampRunID(runID, event.JSONLSink(filepath.Join(runDir, "events.jsonl")))}
 	if prevEmit != nil {
 		sinks = append(sinks, prevEmit.Emit)
 	}
@@ -273,7 +273,7 @@ func runOneShot(deps *orchestrator.Deps, role orchestrator.Role, task string, op
 		OK: runErr == nil, ToolErrors: ag.ToolErrors, Steps: steps, Err: errStr(runErr),
 	})
 	if opts.jsonOut {
-		env := resultEnvelope{OK: runErr == nil, Model: ag.Model, Steps: stepsOf(res),
+		env := resultEnvelope{OK: runErr == nil, Model: ag.Model, Steps: steps,
 			Tokens: ag.TotalTokens, CostUSD: ag.TotalCost, Error: errStr(runErr),
 			CachedTokens: ag.TotalCachedTokens, RunID: runID,
 			FilesChanged: changedSince(preDirty, dirtySet("."))}

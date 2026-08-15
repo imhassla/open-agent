@@ -87,7 +87,7 @@ func runBench(deps *orchestrator.Deps, opts options, filter string) {
 				_ = os.WriteFile(filepath.Join(runDir, "meta.json"), meta, 0o644)
 			}
 			prevEmit := deps.Emit
-			sinks := []func(event.Event){event.JSONLSink(filepath.Join(runDir, "events.jsonl"))}
+			sinks := []func(event.Event){event.StampRunID(runID, event.JSONLSink(filepath.Join(runDir, "events.jsonl")))}
 			if prevEmit != nil {
 				sinks = append(sinks, prevEmit.Emit)
 			}

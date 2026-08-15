@@ -116,8 +116,10 @@ var pricingMu sync.RWMutex
 const WebSearchModel = "perplexity/sonar"
 
 // PriceRank orders models by list price for the cost-ladder router: the sum of
-// per-token input+output prices (0 for :free variants — they sort first). Models
-// with no pricing data rank LAST (never preferred over a known-price model).
+// per-token input+output prices. Models with no pricing data rank LAST (never
+// preferred over a known-price model) — this includes :free variants, which are
+// deliberately absent from the table since the ladder dropped the free tier;
+// they are only reachable via an explicit -m pin, which bypasses ranking.
 func PriceRank(model string) float64 {
 	pricingMu.RLock()
 	p, ok := pricing[model]
@@ -196,6 +198,9 @@ func RefreshPricing(ctx context.Context, c *Client) error {
 	for _, m := range out.Data {
 		in, _ := strconv.ParseFloat(m.Pricing.Prompt, 64)
 		comp, _ := strconv.ParseFloat(m.Pricing.Completion, 64)
+		// Zero-priced catalog rows are skipped ON PURPOSE: a glitched/free 0/0
+		// entry must never clobber a real static price for a paid model. :free
+		// slugs therefore stay out of the table (see PriceRank's contract).
 		if in > 0 || comp > 0 {
 			pricing[m.ID] = [2]float64{in, comp}
 		}

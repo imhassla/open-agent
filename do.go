@@ -84,7 +84,7 @@ func buildOrResumePlan(ctx context.Context, deps *orchestrator.Deps, goal string
 // restored afterward.
 func executePlan(ctx context.Context, deps *orchestrator.Deps, plan *orchestrator.Plan, bb *orchestrator.Blackboard, dir, runID string, bud *budget.Budget, render event.Emitter) (terminal string, runErr error) {
 	prev := deps.Emit
-	deps.Emit = event.NewBus(render.Emit, event.JSONLSink(filepath.Join(dir, "events.jsonl")))
+	deps.Emit = event.NewBus(render.Emit, event.StampRunID(runID, event.JSONLSink(filepath.Join(dir, "events.jsonl"))))
 	defer func() { deps.Emit = prev }()
 
 	fmt.Fprintln(os.Stderr, "executing…")

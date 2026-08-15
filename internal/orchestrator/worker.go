@@ -140,10 +140,11 @@ func BuildWorker(role Role, d *Deps, o Options) (*agent.Agent, error) {
 	// The current date is stated because workers otherwise anchor on their
 	// training cutoff: a traced research worker "verified" a 2024 Go release as
 	// current in 2026, crafting confirmation-biased queries around its stale prior.
-	var preamble string
+	// The date is unconditional — it does not depend on cwd, and losing it on a
+	// Getwd failure would silently reintroduce training-cutoff anchoring.
+	preamble := "Today's date: " + time.Now().Format("2006-01-02") + "."
 	if cwd, err := os.Getwd(); err == nil {
-		preamble = "Today's date: " + time.Now().Format("2006-01-02") +
-			". Working directory: " + cwd +
+		preamble += " Working directory: " + cwd +
 			". Every file path you pass to tools must be RELATIVE to it (e.g. pipeline.go, sub/util.go) — never invent absolute paths."
 	}
 	if d.Tlog != nil {

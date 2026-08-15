@@ -29,10 +29,18 @@ func ensureRunDir(id string) (string, string) {
 	base := id
 	for i := 2; ; i++ {
 		dir := filepath.Join(runsDirPath(), id)
-		if err := os.Mkdir(dir, 0o755); err == nil || !os.IsExist(err) {
+		err := os.Mkdir(dir, 0o755)
+		if err == nil {
 			return id, dir
+		} else if os.IsExist(err) {
+			id = fmt.Sprintf("%s-%d", base, i)
+			continue
 		}
-		id = fmt.Sprintf("%s-%d", base, i)
+		// Non-IsExist error (e.g. permission denied) — print warning but return
+		// the directory path anyway; callers treat traces as best-effort and
+		// must not crash.
+		fmt.Fprintf(os.Stderr, "warning: run dir %s: %v (trace disabled)\n", dir, err)
+		return id, dir
 	}
 }
 

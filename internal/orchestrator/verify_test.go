@@ -384,6 +384,130 @@ func TestRatingPickCoarseFallback(t *testing.T) {
 	}
 }
 
+// TestStatusTouchesDir verifies the git-status path parser for shadow-package detection.
+// It ensures exact and subdirectory matches work, while avoiding false positives from
+// substring matching (e.g., "bench" should NOT match "benchmark.go" or "other/bench/x.go").
+func TestStatusTouchesDir(t *testing.T) {
+	tests := []struct {
+		name   string
+		status string
+		dir    string
+		want   bool
+	}{
+		{
+			name:   "exact match at root",
+			status: "A  bench/x.go",
+			dir:    "bench",
+			want:   true,
+		},
+		{
+			name:   "subdirectory match",
+			status: "M  bench/internal/foo.go",
+			dir:    "bench",
+			want:   true,
+		},
+		{
+			name:   "space-status line still parses",
+			status: " M bench/x.go",
+			dir:    "bench",
+			want:   true,
+		},
+		{
+			name:   "path with spaces",
+			status: "A  bench/my file.go",
+			dir:    "bench",
+			want:   true,
+		},
+		{
+			name:   "exact dir without trailing slash",
+			status: "?? bench",
+			dir:    "bench",
+			want:   true,
+		},
+		{
+			name:   "false positive: filename starts with dir",
+			status: "M  benchmark.go",
+			dir:    "bench",
+			want:   false,
+		},
+		{
+			name:   "false positive: unrelated path contains dir",
+			status: "M  other/bench/f.go",
+			dir:    "bench",
+			want:   false,
+		},
+		{
+			name:   "unmodified unrelated file",
+			status: " M other/main.go",
+			dir:    "bench",
+			want:   false,
+		},
+		{
+			name:   "deleted file in dir",
+			status: "D  bench/old.go",
+			dir:    "bench",
+			want:   true,
+		},
+		{
+			name:   "renamed file in dir",
+			status: "R  bench/a.go -> bench/b.go",
+			dir:    "bench",
+			want:   true,
+		},
+		{
+			name:   "multiple files, one matches",
+			status: "M  cmd/main.go\nA  bench/new.go",
+			dir:    "bench",
+			want:   true,
+		},
+		{
+			name:   "multiple files, none match",
+			status: "M  cmd/main.go\nA  lib/new.go",
+			dir:    "bench",
+			want:   false,
+		},
+		{
+			name:   "empty status",
+			status: "",
+			dir:    "bench",
+			want:   false,
+		},
+		{
+			name:   "whitespace only status",
+			status: "   \n   \n",
+			dir:    "bench",
+			want:   false,
+		},
+		{
+			name:   "deep subdirectory match",
+			status: "A  bench/a/b/c/d.go",
+			dir:    "bench",
+			want:   true,
+		},
+		{
+			name:   "different dir same prefix",
+			status: "M  benches/run.go",
+			dir:    "bench",
+			want:   false,
+		},
+		{
+			name:   "root-level exact dir",
+			status: "?? bench",
+			dir:    "bench",
+			want:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := statusTouchesDir(tt.status, tt.dir)
+			if got != tt.want {
+				t.Errorf("statusTouchesDir(%q, %q) = %v, want %v", tt.status, tt.dir, got, tt.want)
+			}
+		})
+	}
+}
+
 // Explicit tier escalation: a verify-retry pins the NEXT rung up from the model
 // that just failed the gate, instead of re-rolling the same one.
 func TestVerifyRetryEscalatesModel(t *testing.T) {

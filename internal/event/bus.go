@@ -25,6 +25,11 @@ func (b *Bus) Emit(e Event) {
 	}
 }
 
+// StampRunID wraps a sink, setting RunID on every event before delivery.
+func StampRunID(runID string, sink func(Event)) func(Event) {
+	return func(e Event) { e.RunID = runID; sink(e) }
+}
+
 // JSONLSink returns a sink that appends each event as one JSON line to path.
 func JSONLSink(path string) func(Event) {
 	return func(e Event) {
