@@ -56,6 +56,10 @@ func recvTypeName(e ast.Expr) string {
 	switch t := e.(type) {
 	case *ast.StarExpr:
 		return recvTypeName(t.X)
+	case *ast.IndexExpr: // generic receiver T[P]
+		return recvTypeName(t.X)
+	case *ast.IndexListExpr: // generic receiver T[P1, P2]
+		return recvTypeName(t.X)
 	case *ast.Ident:
 		return t.Name
 	}

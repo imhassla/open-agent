@@ -153,6 +153,24 @@ func CoreTools() *Registry {
 	})
 
 	r.Register(Tool{
+		Applies: true,
+		Def: schema("go_replace_func",
+			"Replace an ENTIRE Go function/method by name (AST-based, no exact-text matching). "+
+				"PREFER this over edit_file when rewriting a whole function — it cannot miss like "+
+				"old_string can. name is 'FuncName' or 'Recv.Method'; new_source must be one complete "+
+				"function declaration (include a doc comment — the old one is replaced too). "+
+				"The result is gofmt-ed; invalid Go is rejected without writing.",
+			obj(props{
+				"path":       str("The .go file"),
+				"name":       str("Function name, or Recv.Method for a method"),
+				"new_source": str("The complete replacement function declaration"),
+			}, "path", "name", "new_source")),
+		Handler: func(ctx context.Context, a map[string]any) (string, error) {
+			return tools.ReplaceGoFunc(argStr(a, "path"), argStr(a, "name"), argStr(a, "new_source"))
+		},
+	})
+
+	r.Register(Tool{
 		// go_fmt mutates the tree only with write=true; AppliesWhen reflects that so the
 		// apply-guard counts a real reformat (and doesn't false-count a read-only format).
 		Applies:     true,

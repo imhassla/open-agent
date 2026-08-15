@@ -105,7 +105,8 @@ can still be pinned explicitly with `-m <slug>:free`.
 
 ## Tools available to the agent
 
-`bash` · `read_file` · `write_file` · `edit_file` · `glob` · `grep` · `repo_map` ·
+`bash` · `read_file` · `write_file` · `edit_file` · `go_replace_func` (AST-based
+whole-function replacement — no exact-text matching) · `glob` · `grep` · `repo_map` ·
 `web_search` (grounded + cited, via OpenRouter Sonar) · `web_fetch` · `memory_store` · `memory_retrieve` ·
 `final_answer`. Code workers also get `spawn_subagent` (one-level delegation),
 `read_artifact`, and `code_consensus` (best-of-N with a cross-family judge).

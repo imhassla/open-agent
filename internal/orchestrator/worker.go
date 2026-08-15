@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/imhassla/open-agent/internal/agent"
@@ -132,11 +133,21 @@ func BuildWorker(role Role, d *Deps, o Options) (*agent.Agent, error) {
 	// Telemetry hints go into a per-run Preamble (a first user turn), NOT into the
 	// system prompt — keeping the system prefix byte-stable so the provider can
 	// cache it across runs (hints vary run-to-run and would bust the cache).
+	// The working directory is stated here too: traces show cheap models otherwise
+	// hallucinate absolute paths (/home/user/…, /Users/…/project) and burn steps
+	// on ENOENT round-trips.
 	var preamble string
+	if cwd, err := os.Getwd(); err == nil {
+		preamble = "Working directory: " + cwd +
+			". Every file path you pass to tools must be RELATIVE to it (e.g. pipeline.go, sub/util.go) — never invent absolute paths."
+	}
 	if d.Tlog != nil {
 		if recent, err := d.Tlog.Recent(20, string(role)); err == nil && len(recent) > 0 {
 			if hints := telemetry.Hints(recent); len(hints) > 0 {
 				var sb strings.Builder
+				if preamble != "" {
+					sb.WriteString(preamble + "\n\n")
+				}
 				sb.WriteString("Lessons from recent runs (do not repeat these mistakes):")
 				for _, h := range hints {
 					sb.WriteString("\n- " + h)
