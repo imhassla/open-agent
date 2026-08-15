@@ -301,6 +301,7 @@ func testGetRunNonexistent(t *testing.T, server *Server) {
 
 // testGetRunPathTraversal tests that path traversal attempts are blocked.
 func testGetRunPathTraversal(t *testing.T, server *Server) {
+	// Test case: path traversal with ../
 	req := httptest.NewRequest("GET", "/api/run?id=../../etc/passwd", nil)
 	w := httptest.NewRecorder()
 	server.Handler().ServeHTTP(w, req)
@@ -313,6 +314,28 @@ func testGetRunPathTraversal(t *testing.T, server *Server) {
 			t.Errorf("Path traversal attack succeeded - got system file content")
 		}
 	}
+
+	// Test case: empty id (filepath.Base("") returns ".")
+	t.Run("empty id", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/run?id=", nil)
+		w := httptest.NewRecorder()
+		server.Handler().ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected 400 for empty id, got %d", w.Code)
+		}
+	})
+
+	// Test case: id is "."
+	t.Run("dot id", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/run?id=.", nil)
+		w := httptest.NewRecorder()
+		server.Handler().ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected 400 for dot id, got %d", w.Code)
+		}
+	})
 }
 
 // testGetTelemetry tests the GET /api/telemetry endpoint.

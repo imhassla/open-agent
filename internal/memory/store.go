@@ -6,6 +6,7 @@ package memory
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -46,7 +47,10 @@ type Store struct {
 // ~/.open-agent/memory.json.
 func Open(path string) (*Store, error) {
 	if path == "" {
-		home, _ := os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("resolve home for memory store: %w", err)
+		}
 		path = filepath.Join(home, ".open-agent", "memory.json")
 	}
 	s := &Store{path: path, data: map[string]*Entry{}}
@@ -69,6 +73,9 @@ func (s *Store) load() error {
 		return err
 	}
 	for _, e := range entries {
+		if e == nil {
+			continue
+		}
 		s.data[e.Key] = e
 	}
 	return nil
@@ -143,7 +150,9 @@ func (s *Store) Retrieve(query string, limit int) ([]Entry, error) {
 		out = append(out, *matched[i])
 	}
 	if len(out) > 0 {
-		_ = s.save()
+		if err := s.save(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: memory store save failed (hit counters not persisted): %v\n", err)
+		}
 	}
 	return out, nil
 }

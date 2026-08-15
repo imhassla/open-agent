@@ -168,7 +168,7 @@ func (s RunSpec) RunArgs() []string {
 	// added NET_ADMIN cap) before handing control to the requested command.
 	inner := strings.Join(s.Cmd, " ")
 	if net == NetHTTPS {
-		lock := "oa-lockdown >&2 || true"
+		lock := "oa-lockdown >&2 || { echo 'sandbox: egress lockdown FAILED — aborting (NetHTTPS guarantees no unrestricted network)' >&2; exit 97; }"
 		if inner == "" {
 			inner = "exec bash"
 		}

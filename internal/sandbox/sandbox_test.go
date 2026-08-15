@@ -122,6 +122,13 @@ func TestNetworkModes(t *testing.T) {
 	if !strings.Contains(jh, "oa-lockdown") {
 		t.Errorf("https mode must install the egress firewall before the command, got: %s", jh)
 	}
+	// Fail-closed: lockdown must contain exit 97 and must NOT contain || true
+	if !strings.Contains(jh, "exit 97") {
+		t.Errorf("https mode must fail-closed with exit 97 on lockdown failure, got: %s", jh)
+	}
+	if strings.Contains(jh, "|| true") {
+		t.Errorf("https mode must NOT use fail-open '|| true', got: %s", jh)
+	}
 	// The firewall must run BEFORE the agent command.
 	if strings.Index(jh, "oa-lockdown") > strings.Index(jh, "open-agent code x") {
 		t.Error("lockdown must precede the inner command")

@@ -149,6 +149,14 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	safeID := filepath.Base(id)
 
+	// Reject special path components that filepath.Base returns for empty or "." input
+	// filepath.Base("") and filepath.Base(".") both return ".", which would make runPath
+	// equal to the runs/ directory itself, bypassing the traversal check
+	if safeID == "." || safeID == ".." || safeID == string(filepath.Separator) {
+		http.Error(w, "invalid run id", http.StatusBadRequest)
+		return
+	}
+
 	// Construct and validate the path
 	runPath := filepath.Join(s.DataDir, "runs", safeID)
 	if !strings.HasPrefix(filepath.Clean(runPath), filepath.Clean(filepath.Join(s.DataDir, "runs"))) {

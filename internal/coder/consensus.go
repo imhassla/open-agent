@@ -27,7 +27,11 @@ func charge(bud *budget.Budget, model string, u llm.Usage) {
 	if cost == 0 {
 		cost = llm.CostUSD(model, u.PromptTokens, u.CompletionTokens)
 	}
-	bud.Charge(u.TotalTokens, cost)
+	tokens := u.TotalTokens
+	if tokens == 0 {
+		tokens = u.PromptTokens + u.CompletionTokens
+	}
+	bud.Charge(tokens, cost)
 }
 
 type variant struct {
@@ -65,6 +69,8 @@ func SelfConsistency(ctx context.Context, c llm.Doer, genModels []string, judgeM
 	}
 
 	cands := make([]string, n)
+	errs := make([]error, n)
+	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for i := 0; i < n; i++ {
 		wg.Add(1)
@@ -76,10 +82,14 @@ func SelfConsistency(ctx context.Context, c llm.Doer, genModels []string, judgeM
 				{Role: "system", Content: v.system},
 				{Role: "user", Content: prompt},
 			}, llm.ChatOptions{Model: model, Temperature: v.temp, MaxTokens: 4096})
-			if err == nil {
-				charge(bud, model, resp.Usage)
-				cands[i] = extractCode(resp.Message.Content)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				errs[i] = err
+				return
 			}
+			charge(bud, model, resp.Usage)
+			cands[i] = extractCode(resp.Message.Content)
 		}(i)
 	}
 	wg.Wait()
@@ -92,6 +102,24 @@ func SelfConsistency(ctx context.Context, c llm.Doer, genModels []string, judgeM
 	}
 	switch len(valid) {
 	case 0:
+		// Collect up to 3 distinct error messages from failed goroutines
+		var errMsgs []string
+		seen := make(map[string]bool)
+		for _, err := range errs {
+			if err != nil {
+				msg := err.Error()
+				if !seen[msg] {
+					seen[msg] = true
+					errMsgs = append(errMsgs, msg)
+					if len(errMsgs) >= 3 {
+						break
+					}
+				}
+			}
+		}
+		if len(errMsgs) > 0 {
+			return "", fmt.Errorf("no candidate solutions were generated: %s", strings.Join(errMsgs, "; "))
+		}
 		return "", fmt.Errorf("no candidate solutions were generated")
 	case 1:
 		return valid[0], nil
@@ -114,10 +142,11 @@ func SelfConsistency(ctx context.Context, c llm.Doer, genModels []string, judgeM
 // execRerank partitions candidates by a dependency-free compile-stage check and
 // returns the pool the judge should choose from. A candidate is DROPPED only when
 // it is confidently Go yet fails to parse AND at least one sound candidate exists
-// to prefer instead — so a syntactically-broken candidate never wins, but the
-// check can never remove every option, and non-Go candidates are never penalized.
+// to prefer instead — so a syntactically-broken candidate never wins against a
+// sound candidate, but loses to neutral candidates too and survives only when it
+// is all there is.
 func execRerank(cands []string) []string {
-	var sound, neutral []string
+	var sound, neutral, broken []string
 	for _, cand := range cands {
 		ok, known := goSyntaxOK(cand)
 		switch {
@@ -125,13 +154,21 @@ func execRerank(cands []string) []string {
 			neutral = append(neutral, cand) // not confidently Go — don't judge by syntax
 		case ok:
 			sound = append(sound, cand)
+		default:
+			// known && !ok => syntactically broken Go
+			broken = append(broken, cand)
 		}
-		// known && !ok => syntactically broken Go: dropped ONLY if sound exists.
 	}
 	if len(sound) > 0 {
+		// Sound candidates exist: drop broken ones, keep neutral
 		return append(sound, neutral...)
 	}
-	return cands // nothing sound to prefer → keep everything, let the judge decide
+	if len(neutral) > 0 {
+		// No sound candidates, but neutral exist: drop broken, keep neutral only
+		return neutral
+	}
+	// Nothing sound or neutral — keep everything including broken, let the judge decide
+	return cands
 }
 
 // goSyntaxOK reports whether code parses as Go (known=true means it is
