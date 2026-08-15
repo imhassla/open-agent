@@ -61,6 +61,7 @@ type reviewerTrace struct {
 	Raw        string    `json:"raw"`
 	Candidates []finding `json:"candidates"`
 	Unparsed   bool      `json:"unparsed"`
+	Forced     bool      `json:"forced"` // finalization was forced (budget cut the investigation short)
 }
 
 // verdictTrace is one finding paired with its adversarial ruling.
@@ -124,8 +125,8 @@ func runSelfReview(deps *orchestrator.Deps, opts options, focus string) {
 	// Reviewer streams its tool calls by default so the long read-phase (the
 	// previously-silent 390k-token black box) shows live progress; -v adds nothing
 	// more here but stays honored for parity.
-	findings, raw, parsedOK := reviewPhase(ctx, deps.Client, model, reviewBud, scope, arch, true)
-	rec.Reviewer = reviewerTrace{Raw: raw, Candidates: findings, Unparsed: !parsedOK && strings.TrimSpace(raw) != ""}
+	findings, raw, parsedOK, forced := reviewPhase(ctx, deps.Client, model, reviewBud, scope, arch, true)
+	rec.Reviewer = reviewerTrace{Raw: raw, Candidates: findings, Unparsed: !parsedOK && strings.TrimSpace(raw) != "", Forced: forced}
 	if rec.Reviewer.Unparsed {
 		// A non-empty answer that wouldn't parse is the 390k-tokens-zero-findings trap:
 		// surface it loudly instead of silently reporting "no findings".
@@ -134,6 +135,13 @@ func runSelfReview(deps *orchestrator.Deps, opts options, focus string) {
 	if len(findings) == 0 {
 		if rec.Reviewer.Unparsed {
 			fmt.Println("no findings surfaced (reviewer answer did not parse — see journal for the raw text).")
+		} else if rec.Reviewer.Forced {
+			// Zero findings from a reviewer that got CUT OFF mid-reading is NOT a
+			// clean bill of health — round 1 field data: a package-wide focus burned
+			// the whole budget on read_file calls and "reported clean" without ever
+			// analyzing. Say so, and say what to do about it.
+			fmt.Println("review INCONCLUSIVE: the reviewer ran out of budget while still reading (0 findings ≠ clean). Narrow the focus or raise --max-cost.")
+			rec.Err = "inconclusive: budget exhausted during read phase"
 		} else {
 			fmt.Println("no findings surfaced (reviewer reported a clean scope).")
 		}
@@ -239,7 +247,7 @@ func writeSelfReviewJournal(rec journalRecord) (string, error) {
 // Returns the parsed findings, the reviewer's RAW answer (for the journal), and
 // whether the answer parsed as JSON (false + non-empty raw ⇒ the reviewer emitted
 // prose, which the caller flags rather than silently reporting "no findings").
-func reviewPhase(ctx context.Context, client llm.Doer, model string, bud *budget.Budget, scope, arch string, verbose bool) ([]finding, string, bool) {
+func reviewPhase(ctx context.Context, client llm.Doer, model string, bud *budget.Budget, scope, arch string, verbose bool) ([]finding, string, bool, bool) {
 	sys := `You are a meticulous senior Go engineer reviewing a codebase for REAL defects. You are READ-ONLY:
 use read_file, grep, and repo_map to inspect the actual code — never guess. Report ONLY genuine issues:
 correctness bugs, edge-case gaps, real test-coverage holes. Do NOT report intended/documented behavior,
@@ -256,10 +264,10 @@ CRITICAL: never end your turn with narration like "now let me check…" — if y
 STOP investigating and immediately emit the JSON array with whatever you have concluded (use [] if nothing).`
 	task := fmt.Sprintf("Review ONLY the code under %q — do not audit the rest of the repository. Architecture map for context:\n%s\n\nInspect that code, then finish with the JSON findings array.", scope, arch)
 	finalize := `You are out of investigation budget. Based ONLY on the code you already examined, output a JSON object of your review findings: {"findings":[{"file":"path","symbol":"func/type","severity":"bug|correctness|clarity|test-gap","issue":"precise defect","fix":"one-line fix"}]}. Include only REAL defects you are confident about; use {"findings":[]} if none. At most 6.`
-	raw := investigateThenJSON(ctx, client, model, sys, task, bud, 14, verbose, "review", finalize,
+	raw, forced := investigateThenJSON(ctx, client, model, sys, task, bud, 14, verbose, "review", finalize,
 		func(s string) bool { _, ok := parseFindings(s); return ok })
 	fs, ok := parseFindingsFlexible(raw)
-	return fs, raw, ok
+	return fs, raw, ok, forced
 }
 
 // investigateThenJSON runs a read-only investigation agent bounded by bud/maxSteps,
@@ -273,14 +281,14 @@ STOP investigating and immediately emit the JSON array with whatever you have co
 // runs even if the investigation spent the whole run cap; its spend is charged back to
 // bud for accurate accounting. Returns the best raw answer — the caller parses it,
 // since the reviewer (findings array) and verifier (verdict object) want different shapes.
-func investigateThenJSON(ctx context.Context, client llm.Doer, model, sys, task string, bud *budget.Budget, maxSteps int, verbose bool, label, finalizePrompt string, parses func(string) bool) string {
+func investigateThenJSON(ctx context.Context, client llm.Doer, model, sys, task string, bud *budget.Budget, maxSteps int, verbose bool, label, finalizePrompt string, parses func(string) bool) (string, bool) {
 	ag := readOnlyAgent(client, model, sys, bud, verbose, label, maxSteps)
 	res, err := ag.Run(ctx, task)
 	if err != nil || res == nil {
-		return ""
+		return "", false
 	}
 	if parses(res.Answer) {
-		return res.Answer
+		return res.Answer, false
 	}
 	if verbose {
 		fmt.Fprintln(os.Stderr, "  did not emit JSON (cut off mid-investigation) — forcing a JSON finalization…")
@@ -293,9 +301,9 @@ func investigateThenJSON(ctx context.Context, client llm.Doer, model, sys, task 
 	fin, ferr := ag.Send(ctx, finalizePrompt)
 	bud.Charge(ag.TotalTokens-tok0, ag.TotalCost-cost0)
 	if ferr == nil && fin != nil {
-		return fin.Answer
+		return fin.Answer, true
 	}
-	return res.Answer
+	return res.Answer, true
 }
 
 // parseFindingsFlexible accepts EITHER a bare array [...] or a wrapper object
@@ -328,7 +336,7 @@ call final_answer with ONLY JSON: {"confirmed":true|false,"reason":"one sentence
 	// Same guarantee as the reviewer: the verifier also reads code with tools and can be
 	// cut off before emitting its verdict JSON — investigateThenJSON forces a json_object
 	// finalization so a starved verifier still returns a real ruling instead of prose.
-	raw := investigateThenJSON(ctx, client, model, sys, task, bud, 9, false, "verify", finalize, verdictParses)
+	raw, _ := investigateThenJSON(ctx, client, model, sys, task, bud, 9, false, "verify", finalize, verdictParses)
 	if v, ok := parseVerdict(raw); ok {
 		return v
 	}

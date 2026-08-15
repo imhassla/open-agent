@@ -44,6 +44,14 @@ func ReplaceGoFunc(path, name, newSrc string) (string, error) {
 	if got := newDecl.Name.Name; got != wantName {
 		return "", fmt.Errorf("new_source declares %q but name is %q", got, wantName)
 	}
+	// Verify the receiver matches as well.
+	var gotRecv string
+	if newDecl.Recv != nil && len(newDecl.Recv.List) > 0 {
+		gotRecv = recvTypeName(newDecl.Recv.List[0].Type)
+	}
+	if gotRecv != wantRecv {
+		return "", fmt.Errorf("new_source declares receiver %q but want %q", gotRecv, wantRecv)
+	}
 
 	decl, available := findFunc(f, wantRecv, wantName)
 	if decl == nil {

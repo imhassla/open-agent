@@ -80,6 +80,7 @@ func TestReplaceGoFuncRejectsBadSource(t *testing.T) {
 		"wrong-name": {"Add", "func NotAdd(a, b int) int { return 0 }"},
 		"not-a-func": {"Add", "var x = 1"},
 		"two-funcs":  {"Add", "func Add(a, b int) int { return 0 }\nfunc B() {}"},
+		"wrong-recv": {"Counter.Inc", "func (o *Other) Inc() { o.n += 2 }"},
 	}
 	for tag, c := range cases {
 		if _, err := ReplaceGoFunc(p, c[0], c[1]); err == nil {

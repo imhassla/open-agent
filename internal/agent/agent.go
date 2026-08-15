@@ -470,11 +470,12 @@ func (a *Agent) dispatch(ctx context.Context, tc llm.ToolCall) llm.Message {
 }
 
 // repeatRec remembers one (tool, args) call's result fingerprint, the step it
-// was last seen, and how many identical repeats have occurred.
+// was last seen, the original step when first seen, and how many identical repeats have occurred.
 type repeatRec struct {
-	sum     uint64
-	step    int
-	repeats int
+	sum        uint64
+	step       int
+	originStep int
+	repeats    int
 }
 
 // noteRepeat handles byte-identical repeats of an earlier call: traces show
@@ -497,16 +498,16 @@ func (a *Agent) noteRepeat(name, rawArgs, res string) string {
 	}
 	prev, seen := a.repeats[key]
 	if !seen || prev.sum != sum {
-		a.repeats[key] = repeatRec{sum: sum, step: a.StepsTaken}
+		a.repeats[key] = repeatRec{sum: sum, step: a.StepsTaken, originStep: a.StepsTaken}
 		return res
 	}
-	rec := repeatRec{sum: sum, step: a.StepsTaken, repeats: prev.repeats + 1}
+	rec := repeatRec{sum: sum, step: a.StepsTaken, originStep: prev.originStep, repeats: prev.repeats + 1}
 	a.repeats[key] = rec
 	if rec.repeats == 1 {
 		return res + "\n[note: this exact call already returned this identical result — do not repeat it; act on the result you already have]"
 	}
 	return fmt.Sprintf("[identical result #%d suppressed — this exact call has returned the same output every time since step %d; NOTHING has changed. Stop repeating it and take a different action toward the goal.]",
-		rec.repeats+1, prev.step)
+		rec.repeats+1, prev.originStep)
 }
 
 // argDigest compresses a tool call's raw JSON arguments into a short, readable

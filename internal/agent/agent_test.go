@@ -516,6 +516,15 @@ func TestNoteRepeat(t *testing.T) {
 	if got := a.noteRepeat("glob", `{"pattern":"*.go"}`, "a.go"); !strings.Contains(got, "suppressed") || strings.Contains(got, "a.go") {
 		t.Fatalf("second repeat not suppressed: %q", got)
 	}
+	// Verify originStep: simulate steps and check the message references the FIRST occurrence's step
+	a.StepsTaken = 10
+	if got := a.noteRepeat("glob", `{"pattern":"*.go"}`, "a.go"); !strings.Contains(got, "since step 0") {
+		t.Fatalf("third repeat should reference originStep (0), got: %q", got)
+	}
+	a.StepsTaken = 20
+	if got := a.noteRepeat("glob", `{"pattern":"*.go"}`, "a.go"); !strings.Contains(got, "since step 0") {
+		t.Fatalf("fourth repeat should still reference originStep (0), got: %q", got)
+	}
 	if got := a.noteRepeat("glob", `{"pattern":"*.go"}`, "a.go\nb.go"); strings.Contains(got, "[note:") || strings.Contains(got, "suppressed") {
 		t.Fatalf("changed result wrongly flagged: %q", got)
 	}
