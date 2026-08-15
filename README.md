@@ -94,6 +94,7 @@ Watch it live in `open-agent dashboard` → Router ladder.
 | `ask`                                  | one-shot chat, no tools                         |
 | `research`                             | read-only web research (grounded, cited search) |
 | `do`                                   | plan → parallel multi-model DAG → verify        |
+| `improve`                              | review → fix → verify cycle (fixes uncommitted) |
 | `sandbox`                              | run as root in a hardened box                   |
 | `dashboard`                            | local observability web UI                      |
 | `models` / `runs` / `replay` / `bench` | introspection & self-eval                       |

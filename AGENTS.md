@@ -82,7 +82,10 @@ open-agent do --json --max-cost 0.15 \
 # Preview a do-run's plan + estimated cost WITHOUT running it (free, no worker calls)
 open-agent do --dry-run --json "…" </dev/null   # cost_usd = ladder-based estimate
 
-# Resume an interrupted/failed do-run (run_id from the envelope)
+# Resume an interrupted/failed do-run (run_id from the envelope).
+# NOTE: --max-cost/--max-tokens on resume are a FRESH allowance for this
+# invocation (not the whole run's history) — a budget-killed run must have
+# headroom to finish. Cap the resume call accordingly.
 open-agent do --json --resume <run_id> </dev/null
 
 # Cheap second opinion / summarization

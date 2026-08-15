@@ -45,7 +45,7 @@ func TestHeuristicIntent(t *testing.T) {
 // model call (the doer would error if called).
 func TestClassifyIntentConfidentSkipsModel(t *testing.T) {
 	d := &Deps{Client: errDoer{}, Family: FamilyKimi, Routes: RoutesFor(FamilyKimi)}
-	if got := ClassifyIntent(context.Background(), d, "fix the bug in run.go", nil); got != IntentCodeEdit {
+	if got, _ := ClassifyIntent(context.Background(), d, "fix the bug in run.go", nil); got != IntentCodeEdit {
 		t.Errorf("confident code-edit should skip the model, got %s", got)
 	}
 }
@@ -54,12 +54,12 @@ func TestClassifyIntentConfidentSkipsModel(t *testing.T) {
 // call; the returned label is parsed.
 func TestClassifyIntentFallbackParsesLabel(t *testing.T) {
 	d := &Deps{Client: labelDoer{"orchestrate"}, Family: FamilyKimi, Routes: RoutesFor(FamilyKimi)}
-	if got := ClassifyIntent(context.Background(), d, "do the thing with the stuff", nil); got != IntentOrchestrate {
+	if got, _ := ClassifyIntent(context.Background(), d, "do the thing with the stuff", nil); got != IntentOrchestrate {
 		t.Errorf("fallback should parse 'orchestrate', got %s", got)
 	}
 	// On a model error, fall back to the heuristic lean (ask for this vague input).
 	d2 := &Deps{Client: errDoer{}, Family: FamilyKimi, Routes: RoutesFor(FamilyKimi)}
-	if got := ClassifyIntent(context.Background(), d2, "the stuff over there", nil); got != IntentAsk {
+	if got, _ := ClassifyIntent(context.Background(), d2, "the stuff over there", nil); got != IntentAsk {
 		t.Errorf("model error should fall back to the heuristic lean (ask), got %s", got)
 	}
 }

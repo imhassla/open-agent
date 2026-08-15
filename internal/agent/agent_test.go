@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -530,5 +531,45 @@ func TestNoteRepeat(t *testing.T) {
 	}
 	if got := a.noteRepeat("bash", `{"command":"go test"}`, "a.go"); strings.Contains(got, "[note:") {
 		t.Fatalf("different tool wrongly flagged: %q", got)
+	}
+}
+
+// sanitizeToolCallArgs: malformed argument JSON is repaired IN HISTORY to a
+// valid placeholder (so replayed requests can't 400), valid args untouched.
+func TestSanitizeToolCallArgs(t *testing.T) {
+	msg := llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{
+		{Function: llm.FunctionCall{Name: "read_file", Arguments: `{"path": "a.go`}},   // truncated
+		{Function: llm.FunctionCall{Name: "bash", Arguments: `{"command":"go test"}`}}, // valid
+		{Function: llm.FunctionCall{Name: "glob", Arguments: ``}},                      // empty is allowed
+	}}
+	sanitizeToolCallArgs(&msg)
+	if !strings.Contains(msg.ToolCalls[0].Function.Arguments, "_malformed_args") {
+		t.Fatalf("malformed args not repaired: %q", msg.ToolCalls[0].Function.Arguments)
+	}
+	if !jsonValid(msg.ToolCalls[0].Function.Arguments) {
+		t.Fatalf("repaired args still invalid JSON")
+	}
+	if msg.ToolCalls[1].Function.Arguments != `{"command":"go test"}` {
+		t.Fatalf("valid args mutated: %q", msg.ToolCalls[1].Function.Arguments)
+	}
+	if msg.ToolCalls[2].Function.Arguments != "" {
+		t.Fatalf("empty args mutated: %q", msg.ToolCalls[2].Function.Arguments)
+	}
+}
+
+func jsonValid(s string) bool { return json.Valid([]byte(s)) }
+
+// The widened poison matcher catches the field-observed generic 400.
+func TestPoisonedToolCallMatcher(t *testing.T) {
+	for body, want := range map[string]bool{
+		`{"message":"invalid request error trace_id: abc"}`: true,
+		`invalid tool call provided in messages[17]`:        true,
+		`too many tool calls`:                               true,
+		`rate limit exceeded`:                               false,
+	} {
+		ae := &llm.APIError{Status: 400, Body: body}
+		if got := poisonedToolCall(ae); got != want {
+			t.Fatalf("poisonedToolCall(%q) = %v, want %v", body, got, want)
+		}
 	}
 }

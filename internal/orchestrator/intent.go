@@ -88,10 +88,11 @@ var reIntentLabel = regexp.MustCompile(`(?i)(orchestrate|code-edit|code|ask)`)
 // back to the heuristic's lean on any failure (never a blind default). The cheap call
 // runs only on genuinely ambiguous input, so it stays off the hot path; an orchestrate
 // misfire is caught at the manual-first plan gate anyway.
-func ClassifyIntent(ctx context.Context, d *Deps, msg string, history []llm.Message) Intent {
+// Returns the Intent and the LLM usage (tokens/cost) for the classification call.
+func ClassifyIntent(ctx context.Context, d *Deps, msg string, history []llm.Message) (Intent, llm.Usage) {
 	lean, confident := heuristicIntent(msg)
 	if confident || d == nil || d.Client == nil {
-		return lean
+		return lean, llm.Usage{}
 	}
 	model := llm.ModelCheap
 	if r, ok := d.route(RoleCheap); ok && r.Model != "" {
@@ -107,17 +108,17 @@ func ClassifyIntent(ctx context.Context, d *Deps, msg string, history []llm.Mess
 		{Role: "user", Content: truncate(msg, 1000)},
 	}, llm.ChatOptions{Model: model, MaxTokens: 16, JSONObject: false})
 	if err != nil {
-		return lean
+		return lean, llm.Usage{}
 	}
 	m := reIntentLabel.FindString(strings.ToLower(resp.Message.Content))
 	switch m {
 	case "orchestrate":
-		return IntentOrchestrate
+		return IntentOrchestrate, resp.Usage
 	case "code-edit", "code":
-		return IntentCodeEdit
+		return IntentCodeEdit, resp.Usage
 	case "ask":
-		return IntentAsk
+		return IntentAsk, resp.Usage
 	default:
-		return lean
+		return lean, llm.Usage{}
 	}
 }

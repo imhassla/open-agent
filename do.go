@@ -46,6 +46,11 @@ func buildOrResumePlan(ctx context.Context, deps *orchestrator.Deps, goal string
 		steps = 60 // generous global step ceiling across all parallel workers
 	}
 	// Optional token/cost/wall ceilings (0 = unbounded) from --max-tokens/--max-cost/--deadline.
+	// DELIBERATELY fresh on --resume too: the caps authorize THIS invocation's
+	// spend, not the whole run's history — the most common resume cause is a
+	// budget/wall-clock death, and carrying prior spend forward would leave a
+	// resumed run zero headroom to make progress. Callers wanting a global
+	// ceiling pass a smaller cap on resume.
 	bud = budget.New(steps, opts.maxTokens, opts.maxCostUSD, opts.deadline)
 	runsDir := filepath.Join(homeDir(), ".open-agent", "runs")
 

@@ -127,6 +127,16 @@ func runSelfReview(deps *orchestrator.Deps, opts options, focus string) {
 	// more here but stays honored for parity.
 	findings, raw, parsedOK, forced := reviewPhase(ctx, deps.Client, model, reviewBud, scope, arch, true)
 	rec.Reviewer = reviewerTrace{Raw: raw, Candidates: findings, Unparsed: !parsedOK && strings.TrimSpace(raw) != "", Forced: forced}
+
+	// An EMPTY reviewer answer (the agent errored or returned nil) is neither a
+	// clean scope nor an unparsed one — report the failure as such.
+	if strings.TrimSpace(raw) == "" && len(findings) == 0 {
+		rec.Err = "reviewer agent failed (empty answer)"
+		fmt.Println("review FAILED: the reviewer agent returned no answer at all (see journal) — not a clean scope.")
+		reportSelfReview(scope, nil, bud)
+		return
+	}
+
 	if rec.Reviewer.Unparsed {
 		// A non-empty answer that wouldn't parse is the 390k-tokens-zero-findings trap:
 		// surface it loudly instead of silently reporting "no findings".
@@ -177,13 +187,22 @@ func runSelfReview(deps *orchestrator.Deps, opts options, focus string) {
 			vbud := bud.Child(0, perVerTok, perVerCost, 0)
 			v := verifyFinding(ctx, deps.Client, model, vbud, f, arch)
 			results[i] = checked{f: f, v: v}
-			mark := "✗ refuted"
+			// A refutation with no substantive reason means the verifier was cut
+			// off, not that the finding is false — show it as unverified (it
+			// still does not count as confirmed).
+			mark := "?"
+			reason := v.Reason
 			if v.Confirmed {
 				mark = "✓ CONFIRMED"
+			} else if len(strings.TrimSpace(v.Reason)) >= 15 {
+				mark = "✗ refuted"
+			} else {
+				mark = "? unverified (verifier gave no reason)"
+				reason = "(verifier cut off)"
 			}
 			pmu.Lock()
 			done++
-			fmt.Fprintf(os.Stderr, "  [%d/%d] %s  %s:%s — %s\n", done, len(findings), mark, f.File, f.Symbol, truncate(v.Reason, 80))
+			fmt.Fprintf(os.Stderr, "  [%d/%d] %s  %s:%s — %s\n", done, len(findings), mark, f.File, f.Symbol, truncate(reason, 80))
 			pmu.Unlock()
 		}(i, f)
 	}
@@ -310,14 +329,27 @@ func investigateThenJSON(ctx context.Context, client llm.Doer, model, sys, task 
 // {"findings":[...]} (what json_object mode returns), so the reviewer's two output
 // shapes both parse. The bool is false only when neither shape is valid JSON.
 func parseFindingsFlexible(s string) ([]finding, bool) {
+	s = strings.TrimSpace(s)
 	if fs, ok := parseFindings(s); ok {
 		return fs, true
 	}
 	var wrap struct {
 		Findings []finding `json:"findings"`
 	}
-	if json.Unmarshal([]byte(strings.TrimSpace(s)), &wrap) == nil {
+	if json.Unmarshal([]byte(s), &wrap) == nil {
 		return wrap.Findings, true
+	}
+	// Try extracting JSON from first '{' to last '}' (models sometimes wrap in prose/fences)
+	firstBrace := strings.Index(s, "{")
+	lastBrace := strings.LastIndex(s, "}")
+	if firstBrace >= 0 && lastBrace > firstBrace {
+		extracted := s[firstBrace : lastBrace+1]
+		if json.Unmarshal([]byte(extracted), &wrap) == nil {
+			return wrap.Findings, true
+		}
+		if fs, ok := parseFindings(extracted); ok {
+			return fs, true
+		}
 	}
 	return nil, false
 }

@@ -193,6 +193,14 @@ func main() {
 		return
 	}
 
+	// `improve` — the automated review→fix→verify cycle: verified self-review
+	// findings are fixed by code workers one by one, each gated by the full test
+	// suite (failed gate = revert). Changes are left uncommitted for review.
+	if cmd == "improve" {
+		runImprove(deps, opts, task)
+		return
+	}
+
 	// Unified interactive session (#18). Everything that isn't a reserved tooling
 	// subcommand (models/version/runs/replay/bench/do, handled above) lands here.
 	switch cmd {
@@ -244,6 +252,10 @@ func runOneShot(deps *orchestrator.Deps, role orchestrator.Role, task string, op
 		ModelOverride: opts.model, MaxSteps: opts.maxSteps, Verbose: opts.verbose,
 		Streaming: !opts.noStream, Budget: oneShotBudget(opts),
 		Class: orchestrator.ClassifyGoal(role, task), // pick from the same fine bucket the outcome records into
+		// One-shot code runs are scripted (often --json): a worker that only
+		// DESCRIBES a change must be nudged to apply it, exactly like DAG code
+		// tasks — a prose 'success' with zero edits was observed in the field.
+		RequireApply: role == orchestrator.RoleCode,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -589,6 +601,7 @@ Commands:
   bench     Execution-grounded self-eval over built-in fixtures (use --families a,b)
   runs      List recorded do-runs (tasks, steps, cost) newest first
   replay    Replay a run's event trace + cache-hit summary: replay <run-id>
+  improve   Review → fix → verify in one shot: improve [focus] (fixes stay uncommitted)
   dashboard Local web observability over ~/.open-agent (--port, default 8787)
   self-review  Review this codebase for real defects (verified: reviewer + adversarial
             verification); optional focus path, e.g. self-review internal/rating

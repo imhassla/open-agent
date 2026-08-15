@@ -245,6 +245,7 @@ func (a *Agent) Send(ctx context.Context, userInput string) (*Result, error) {
 
 		msg := resp.Message
 		msg.Role = "assistant"
+		sanitizeToolCallArgs(&msg)
 		a.msgs = append(a.msgs, msg)
 
 		// Direct textual answer (no tool calls). finish_reason "length" means the
@@ -615,16 +616,40 @@ func (a *Agent) salvageNoSummary(r *Result) {
 	}
 }
 
+// sanitizeToolCallArgs repairs, IN THE STORED HISTORY ONLY, tool calls whose
+// Arguments are not valid JSON. Weak models occasionally emit truncated or
+// unbalanced argument strings; the dispatch layer correctly errors on them, but
+// the malformed assistant message would stay in the conversation and some
+// providers then 400 EVERY subsequent request ("invalid request error") — a
+// dead run at the very next step (observed twice in the field with
+// qwen3-coder-next). Dispatch still sees the ORIGINAL string (it reads the
+// response object, not history), so the model still gets the corrective
+// parse-error reply.
+func sanitizeToolCallArgs(msg *llm.Message) {
+	for i, tc := range msg.ToolCalls {
+		raw := strings.TrimSpace(tc.Function.Arguments)
+		if raw == "" || json.Valid([]byte(raw)) {
+			continue
+		}
+		repaired, _ := json.Marshal(map[string]string{"_malformed_args": truncate(raw, 400)})
+		msg.ToolCalls[i].Function.Arguments = string(repaired)
+	}
+}
+
 // poisonedToolCall reports whether an API error means the conversation HISTORY
 // was rejected because of a tool call already in it (OpenRouter/provider 400s
-// like `invalid tool call provided in messages[17].tool_calls[0]: too long` or
-// `too many tool calls`) — retrying the same history can never succeed.
+// like `invalid tool call provided in messages[17].tool_calls[0]: too long`,
+// `too many tool calls`, or the generic `invalid request error` some providers
+// return for a malformed call in history) — retrying the same history can never
+// succeed. The generic phrase can also cover non-history 400s; the recovery is
+// bounded to one exchange-drop per Send, so a misfire costs one retry.
 func poisonedToolCall(ae *llm.APIError) bool {
 	if ae.Status != 400 && ae.Status != 200 {
 		return false
 	}
 	body := strings.ToLower(ae.Body)
-	return strings.Contains(body, "invalid tool call") || strings.Contains(body, "too many tool calls")
+	return strings.Contains(body, "invalid tool call") || strings.Contains(body, "too many tool calls") ||
+		strings.Contains(body, "invalid request error")
 }
 
 // dropLastToolExchange removes the most recent assistant message that carries

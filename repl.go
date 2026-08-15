@@ -146,7 +146,10 @@ func (s *session) turn(line string) {
 		s.converse(ctx, s.pin, line)
 		return
 	}
-	switch orchestrator.ClassifyIntent(ctx, s.deps, line, s.history) {
+	intent, usage := orchestrator.ClassifyIntent(ctx, s.deps, line, s.history)
+	s.tokens += usage.TotalTokens
+	s.cost += usage.Cost
+	switch intent {
 	case orchestrator.IntentOrchestrate:
 		s.orchestrate(ctx, line)
 	case orchestrator.IntentCodeEdit:
@@ -174,6 +177,8 @@ func (s *session) converse(ctx context.Context, role orchestrator.Role, line str
 	res, rerr := w.Send(ctx, line)
 	if rerr != nil {
 		fmt.Fprintln(os.Stderr, "\nerror:", rerr)
+		s.tokens += w.TotalTokens
+		s.cost += w.TotalCost
 		s.deps.Tlog.Record(telemetry.Record{Kind: string(role), Task: truncate(line, 200), Model: w.Model, OK: false, Err: rerr.Error(), ToolErrors: w.ToolErrors})
 		return
 	}
@@ -218,12 +223,18 @@ func (s *session) orchestrate(ctx context.Context, line string) {
 			s.manual = false // hands-off for the rest of the session
 		}
 	}
-	terminal, _ := executePlan(ctx, s.deps, plan, bb, dir, runID, bud, s.render)
-	if terminal != "" {
+	terminal, runErr := executePlan(ctx, s.deps, plan, bb, dir, runID, bud, s.render)
+	var folded string
+	switch {
+	case runErr != nil:
+		// A failed orchestration must be distinguishable from a quiet success in
+		// both the console and the folded transcript the next turns build on.
+		folded = fmt.Sprintf("(orchestration FAILED: %v)", runErr)
+		fmt.Fprintln(os.Stderr, folded)
+	case terminal != "":
 		fmt.Println(terminal)
-	}
-	folded := terminal
-	if folded == "" {
+		folded = terminal
+	default:
 		folded = "(orchestrated run produced no terminal output)"
 	}
 	s.foldHistory(line, folded)
