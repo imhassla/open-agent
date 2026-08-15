@@ -69,6 +69,15 @@ Then push the clean branch as the remote's main:
 git push origin public:main
 ```
 
+## Pre-publication regression ritual
+
+Run `make preflight` before every public sync: it executes the full test suite
+and the execution-grounded bench matrix across the three main worker families
+(`qwen,glm,minimax` — live OpenRouter calls, ~$0.15, a few minutes). Publish
+only on a green preflight. A single family regressing means the change is
+family-specific or broke routing — diagnose with the printed `replay <run-id>`
+before shipping.
+
 Keep doing everyday work on `main`; touch `public` only to publish.
 
 ## What was cleaned for publication

@@ -40,10 +40,12 @@ const (
 	GrokCode     = "x-ai/grok-build-0.1"        // coding-focused ("build")
 	GrokAgentic  = "x-ai/grok-4.20-multi-agent" // agentic, multi-agent
 
-	// DeepSeek (MIT open weights, ~1M ctx)
-	DeepSeekCoder  = "deepseek/deepseek-v4-pro"   // best all-rounder per dollar
-	DeepSeekReason = "deepseek/deepseek-r1-0528"  // dedicated reasoner
-	DeepSeekCheap  = "deepseek/deepseek-v4-flash" // cheap bulk
+	// DeepSeek (MIT open weights, ~1M ctx). The bare v4-pro alias was REPRICED
+	// ~2.7× up 2026-08; the dated -0813 snapshot keeps the old $0.435/$0.87 —
+	// route to the snapshot, not the alias.
+	DeepSeekCoder  = "deepseek/deepseek-v4-pro-0813" // best all-rounder per dollar
+	DeepSeekReason = "deepseek/deepseek-r1-0528"     // dedicated reasoner
+	DeepSeekCheap  = "deepseek/deepseek-v4-flash"    // cheap bulk
 
 	// Qwen (long context; refreshed to the 3.7/3.8 generation 2026-08-15)
 	QwenCoder    = "qwen/qwen3-coder-next"   // newest coder line, 262K ctx, cheaper than qwen3-coder
@@ -90,7 +92,7 @@ var pricing = map[string][2]float64{
 
 	DeepSeekCoder:  {0.000000435, 0.00000087},
 	DeepSeekReason: {0.0000005, 0.00000215},
-	DeepSeekCheap:  {0.000000098, 0.000000196},
+	DeepSeekCheap:  {0.000000074, 0.000000148},
 
 	QwenCoder:    {0.00000012, 0.0000008},
 	QwenReason:   {0.00000078, 0.0000039},

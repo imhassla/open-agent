@@ -459,8 +459,13 @@ func (a *Agent) dispatch(ctx context.Context, tc llm.ToolCall) llm.Message {
 		return reply(a.noteRepeat(tc.Function.Name, tc.Function.Arguments, fmt.Sprintf("ERROR: %v", err)))
 	}
 	// Result size feeds token-bloat diagnosis (an oversized read shows up here).
-	a.emit(event.Event{Kind: "toolres", TaskID: a.Label, Model: a.Model,
-		Text: fmt.Sprintf("%s ok %dch", tc.Function.Name, len(res))})
+	// Informational web tools also record a short PREVIEW: research-quality
+	// failures (stale/hallucinated facts) are undiagnosable from a byte count.
+	resNote := fmt.Sprintf("%s ok %dch", tc.Function.Name, len(res))
+	if tc.Function.Name == "web_search" || tc.Function.Name == "web_fetch" {
+		resNote += " | " + truncate(strings.ReplaceAll(res, "\n", " "), 160)
+	}
+	a.emit(event.Event{Kind: "toolres", TaskID: a.Label, Model: a.Model, Text: resNote})
 	return reply(a.noteRepeat(tc.Function.Name, tc.Function.Arguments, res))
 }
 

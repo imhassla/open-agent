@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/imhassla/open-agent/internal/agent"
 	"github.com/imhassla/open-agent/internal/budget"
@@ -136,9 +137,13 @@ func BuildWorker(role Role, d *Deps, o Options) (*agent.Agent, error) {
 	// The working directory is stated here too: traces show cheap models otherwise
 	// hallucinate absolute paths (/home/user/…, /Users/…/project) and burn steps
 	// on ENOENT round-trips.
+	// The current date is stated because workers otherwise anchor on their
+	// training cutoff: a traced research worker "verified" a 2024 Go release as
+	// current in 2026, crafting confirmation-biased queries around its stale prior.
 	var preamble string
 	if cwd, err := os.Getwd(); err == nil {
-		preamble = "Working directory: " + cwd +
+		preamble = "Today's date: " + time.Now().Format("2006-01-02") +
+			". Working directory: " + cwd +
 			". Every file path you pass to tools must be RELATIVE to it (e.g. pipeline.go, sub/util.go) — never invent absolute paths."
 	}
 	if d.Tlog != nil {
