@@ -41,8 +41,9 @@ func CoreTools() *Registry {
 
 	r.Register(Tool{
 		Def: schema("read_file",
-			"Read a file from disk. Without start/end returns the whole file; with start/end returns "+
-				"that 1-based inclusive line range with line numbers (use for large files).",
+			"Read a file from disk. Without start/end returns the file (large files are truncated with "+
+				"a marker naming the line to continue from); with start/end returns that 1-based inclusive "+
+				"line range with line numbers. Page through large files with start/end instead of re-reading.",
 			obj(props{
 				"path":  str("Path to the file"),
 				"start": integer("First line (1-based, optional)"),

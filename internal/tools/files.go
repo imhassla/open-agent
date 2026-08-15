@@ -2,25 +2,112 @@ package tools
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-// ReadFile returns up to maxChars of a file's contents.
+// resolveNear recovers from a mis-pathed file reference — models routinely glue a
+// Go import path or module prefix onto a filename ("oalab/pipeline/pipeline.go"
+// for "./pipeline.go"), and each ENOENT otherwise costs a full model round-trip.
+// It tries progressively stripping leading path components, then a bounded
+// basename search under cwd. Returns the matches found (empty = unresolvable).
+func resolveNear(path string) []string {
+	// 1) Strip leading components: a/b/c.go → b/c.go → c.go.
+	parts := strings.Split(filepath.ToSlash(path), "/")
+	for i := 1; i < len(parts); i++ {
+		cand := filepath.Join(parts[i:]...)
+		if st, err := os.Stat(cand); err == nil && !st.IsDir() {
+			return []string{cand}
+		}
+	}
+	// 2) Bounded walk matching the basename (skip VCS/dependency dirs).
+	base := filepath.Base(path)
+	var matches []string
+	seen := 0
+	_ = filepath.WalkDir(".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			n := d.Name()
+			if n == ".git" || n == "node_modules" || n == "vendor" || n == "__pycache__" || (len(n) > 1 && strings.HasPrefix(n, ".")) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if seen++; seen > 20000 || len(matches) > 5 {
+			return filepath.SkipAll
+		}
+		if d.Name() == base {
+			matches = append(matches, p)
+		}
+		return nil
+	})
+	return matches
+}
+
+// notFoundHint formats an ENOENT with recovery guidance from resolveNear matches.
+func notFoundHint(path string, matches []string) string {
+	if len(matches) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s does not exist; similar files: %s", path, strings.Join(matches, ", "))
+}
+
+// readFileDefaultChars caps a whole-file read; rangeMaxChars caps a line-range
+// read (a range read is an explicit "show me more" so it gets a higher budget).
+// Both matter twice over: the payload is re-sent with the conversation on every
+// subsequent agent step, so an unbounded read multiplies its token cost by the
+// steps remaining.
+const (
+	readFileDefaultChars = 30000
+	rangeMaxChars        = 60000
+)
+
+// ReadFile returns up to maxChars of a file's contents. A truncated read reports
+// how much was shown, the file's total size in chars and lines, and the exact
+// start line to continue from — so the model can page instead of stalling.
 func ReadFile(path string, maxChars int) (string, error) {
 	if maxChars <= 0 {
-		maxChars = 20000
+		maxChars = readFileDefaultChars
 	}
 	data, err := os.ReadFile(path)
+	note := ""
+	if err != nil && os.IsNotExist(err) {
+		switch matches := resolveNear(path); len(matches) {
+		case 0:
+			return "", err
+		case 1:
+			// Unambiguous: serve the resolved file (flagged) instead of burning a
+			// model round-trip on the ENOENT.
+			note = fmt.Sprintf("# note: %s not found; reading %s instead\n", path, matches[0])
+			data, err = os.ReadFile(matches[0])
+		default:
+			return "", fmt.Errorf("%s", notFoundHint(path, matches))
+		}
+	}
 	if err != nil {
 		return "", err
 	}
+	// The note stays outside the truncation math so the resume line is exact.
 	s := string(data)
-	if len(s) > maxChars {
-		s = s[:maxChars] + "\n…[truncated]"
+	if len(s) <= maxChars {
+		return note + s, nil
 	}
-	return s, nil
+	shown := s[:maxChars]
+	// Cut at the last full line so the continuation start is exact.
+	if i := strings.LastIndexByte(shown, '\n'); i > 0 {
+		shown = shown[:i]
+	}
+	shownLines := strings.Count(shown, "\n") + 1
+	totalLines := strings.Count(s, "\n")
+	if len(s) > 0 && !strings.HasSuffix(s, "\n") {
+		totalLines++
+	}
+	return fmt.Sprintf("%s%s\n…[truncated: %d of %d chars (lines 1-%d of %d). Continue with read_file start=%d]",
+		note, shown, len(shown), len(s), shownLines, totalLines, shownLines+1), nil
 }
 
 // ReadFileLines returns lines [start,end] (1-based, inclusive) with cat -n style
@@ -28,6 +115,14 @@ func ReadFile(path string, maxChars int) (string, error) {
 // start<=0 defaults to 1; end<=0 or past EOF defaults to the last line.
 func ReadFileLines(path string, start, end int) (string, error) {
 	data, err := os.ReadFile(path)
+	if err != nil && os.IsNotExist(err) {
+		if matches := resolveNear(path); len(matches) == 1 {
+			path = matches[0] // unambiguous — the header below shows the real path
+			data, err = os.ReadFile(path)
+		} else if len(matches) > 1 {
+			return "", fmt.Errorf("%s", notFoundHint(path, matches))
+		}
+	}
 	if err != nil {
 		return "", err
 	}
@@ -52,6 +147,12 @@ func ReadFileLines(path string, start, end int) (string, error) {
 	fmt.Fprintf(&b, "# %s (lines %d-%d of %d)\n", path, start, end, total)
 	for i := start; i <= end; i++ {
 		fmt.Fprintf(&b, "%6d\t%s\n", i, lines[i-1])
+		// A range read is bounded too: start=1 on a huge file must not dump the
+		// whole file into the context. The marker names the exact resume line.
+		if b.Len() > rangeMaxChars && i < end {
+			fmt.Fprintf(&b, "…[range truncated at line %d of requested %d-%d. Continue with start=%d]", i, start, end, i+1)
+			break
+		}
 	}
 	return strings.TrimRight(b.String(), "\n"), nil
 }
@@ -71,6 +172,13 @@ func editPlan(path, oldStr, newStr string, replaceAll bool) (before, after strin
 	}
 	data, rerr := os.ReadFile(path)
 	if rerr != nil {
+		// Suggest near-matches but NEVER silently edit a different file than the
+		// one named — an edit must stay exactly where the model pointed it.
+		if os.IsNotExist(rerr) {
+			if hint := notFoundHint(path, resolveNear(path)); hint != "" {
+				return "", "", 0, fmt.Errorf("%s (pass the correct path explicitly)", hint)
+			}
+		}
 		return "", "", 0, rerr
 	}
 	before = string(data)

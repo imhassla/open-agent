@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 
@@ -420,7 +421,11 @@ func (a *Agent) dispatch(ctx context.Context, tc llm.ToolCall) llm.Message {
 	if a.Verbose {
 		fmt.Fprintf(os.Stderr, "  → %s(%s)\n", tc.Function.Name, truncate(tc.Function.Arguments, 140))
 	}
-	a.emit(event.Event{Kind: "tool", TaskID: a.Label, Model: a.Model, Text: tc.Function.Name})
+	// The trace carries WHAT was called (arg digest), not just the tool name —
+	// an orchestrator replaying a failed run needs to see which file/command/range
+	// each step touched to diagnose where the worker went wrong.
+	a.emit(event.Event{Kind: "tool", TaskID: a.Label, Model: a.Model,
+		Text: tc.Function.Name + "(" + argDigest(tc.Function.Arguments) + ")"})
 
 	tool, ok := a.Registry.Get(tc.Function.Name)
 	if !ok {
@@ -436,9 +441,50 @@ func (a *Agent) dispatch(ctx context.Context, tc llm.ToolCall) llm.Message {
 
 	res, err := tool.Handler(ctx, args)
 	if err != nil {
+		// Tool errors are the diagnostic gold in a trace: record them verbatim
+		// (truncated) so replay shows WHY a worker burned steps.
+		a.emit(event.Event{Kind: "toolres", TaskID: a.Label, Model: a.Model,
+			Text: tc.Function.Name + " ERROR: " + truncate(err.Error(), 160)})
 		return reply(fmt.Sprintf("ERROR: %v", err))
 	}
+	// Result size feeds token-bloat diagnosis (an oversized read shows up here).
+	a.emit(event.Event{Kind: "toolres", TaskID: a.Label, Model: a.Model,
+		Text: fmt.Sprintf("%s ok %dch", tc.Function.Name, len(res))})
 	return reply(res)
+}
+
+// argDigest compresses a tool call's raw JSON arguments into a short, readable
+// summary for the event trace: scalar values are kept (truncated), bulky payloads
+// (content, old_string, …) are reduced to their length. Never fails — a parse
+// error just yields a truncated raw string.
+func argDigest(rawJSON string) string {
+	var m map[string]any
+	if json.Unmarshal([]byte(rawJSON), &m) != nil || len(m) == 0 {
+		return truncate(strings.TrimSpace(rawJSON), 80)
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		switch v := m[k].(type) {
+		case string:
+			if len(v) > 48 {
+				parts = append(parts, fmt.Sprintf("%s:%dch", k, len(v)))
+			} else {
+				parts = append(parts, k+"="+v)
+			}
+		case float64:
+			parts = append(parts, fmt.Sprintf("%s=%g", k, v))
+		case bool:
+			parts = append(parts, fmt.Sprintf("%s=%t", k, v))
+		default:
+			parts = append(parts, k+"=…")
+		}
+	}
+	return truncate(strings.Join(parts, " "), 160)
 }
 
 // needApplyNudge reports whether the worker is trying to complete a code task

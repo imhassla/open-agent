@@ -62,15 +62,13 @@ func buildOrResumePlan(ctx context.Context, deps *orchestrator.Deps, goal string
 		return plan, bb, runID, dir, bud, nil
 	}
 
-	runID = newRunID(goal)
-	dir = filepath.Join(runsDir, runID)
+	runID, dir = ensureRunDir(newRunID(goal))
 	fmt.Fprintln(os.Stderr, "planning…")
 	p, perr := orchestrator.MakePlanConsensus(ctx, deps, goal, 3, bud)
 	if perr != nil {
 		return nil, nil, "", "", nil, fmt.Errorf("plan error: %w", perr)
 	}
 	plan = p
-	_ = os.MkdirAll(dir, 0o755)
 	_ = savePlan(filepath.Join(dir, "plan.json"), plan)
 	bb = orchestrator.NewBlackboard(filepath.Join(dir, "blackboard.json"))
 	return plan, bb, runID, dir, bud, nil

@@ -72,8 +72,8 @@ policy, sandbox recipes).
 
 ## The cost-ladder router
 
-Every role's candidate set is all families' models for that role **plus** `:free` catalog
-variants, ordered by _observed per-task cost_ (list price for cold rungs). For each
+Every role's candidate set is all families' models for that role, ordered by _observed
+per-task cost_ (list price for cold rungs). For each
 `(role, task-class)` bucket the router:
 
 - tries the cheapest **unproven** rung first, stops at the cheapest **proven-reliable**
@@ -100,7 +100,8 @@ Watch it live in `open-agent dashboard` → Router ladder.
 
 Model families: `kimi`, `glm`, `google`, `grok`, `deepseek`, `qwen`, `minimax`, `mistral`
 (the family is the router's cold-start prior; the ladder learns from there). `:free`
-catalog models are folded into the candidate pool automatically.
+catalog models are excluded from the ladder (field-tested too weak for real work) but
+can still be pinned explicitly with `-m <slug>:free`.
 
 ## Tools available to the agent
 

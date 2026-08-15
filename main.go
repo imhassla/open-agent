@@ -25,6 +25,7 @@ import (
 	"github.com/imhassla/open-agent/internal/budget"
 	"github.com/imhassla/open-agent/internal/config"
 	"github.com/imhassla/open-agent/internal/dash"
+	"github.com/imhassla/open-agent/internal/event"
 	"github.com/imhassla/open-agent/internal/llm"
 	"github.com/imhassla/open-agent/internal/orchestrator"
 	"github.com/imhassla/open-agent/internal/rating"
@@ -224,6 +225,21 @@ func runOneShot(deps *orchestrator.Deps, role orchestrator.Role, task string, op
 	if opts.jsonOut {
 		preDirty = dirtySet(".")
 	}
+	// One-shot runs get the same trace artifacts as `do` runs: a run dir with an
+	// events.jsonl (steps, tool calls with arg digests, tool results) and a run_id
+	// in the envelope — so an orchestrator can `open-agent replay <run_id>` a
+	// worker that failed instead of guessing what it did.
+	runID, runDir := ensureRunDir(newRunID(string(role) + " " + task))
+	if meta, merr := json.Marshal(runMeta{Goal: task, Kind: string(role)}); merr == nil {
+		_ = os.WriteFile(filepath.Join(runDir, "meta.json"), meta, 0o644)
+	}
+	prevEmit := deps.Emit
+	sinks := []func(event.Event){event.JSONLSink(filepath.Join(runDir, "events.jsonl"))}
+	if prevEmit != nil {
+		sinks = append(sinks, prevEmit.Emit)
+	}
+	deps.Emit = event.NewBus(sinks...)
+	defer func() { deps.Emit = prevEmit }()
 	ag, err := orchestrator.BuildWorker(role, deps, orchestrator.Options{
 		ModelOverride: opts.model, MaxSteps: opts.maxSteps, Verbose: opts.verbose,
 		Streaming: !opts.noStream, Budget: oneShotBudget(opts),
@@ -259,7 +275,7 @@ func runOneShot(deps *orchestrator.Deps, role orchestrator.Role, task string, op
 	if opts.jsonOut {
 		env := resultEnvelope{OK: runErr == nil, Model: ag.Model, Steps: stepsOf(res),
 			Tokens: ag.TotalTokens, CostUSD: ag.TotalCost, Error: errStr(runErr),
-			CachedTokens: ag.TotalCachedTokens,
+			CachedTokens: ag.TotalCachedTokens, RunID: runID,
 			FilesChanged: changedSince(preDirty, dirtySet("."))}
 		if res != nil {
 			env.Answer = res.Answer
@@ -285,7 +301,7 @@ func runOneShot(deps *orchestrator.Deps, role orchestrator.Role, task string, op
 	if res.StopReason != "" {
 		fmt.Fprintf(os.Stderr, "warning: partial answer (stopped: %s)\n", res.StopReason)
 	}
-	fmt.Fprintf(os.Stderr, "\n[%d steps · %d tok · ~$%.4f · %s]\n", res.Steps, res.TotalTokens, res.TotalCost, ag.Model)
+	fmt.Fprintf(os.Stderr, "\n[%d steps · %d tok · ~$%.4f · %s · replay %s]\n", res.Steps, res.TotalTokens, res.TotalCost, ag.Model, runID)
 }
 
 // resultEnvelope is the --json machine contract: exactly one JSON object on stdout.

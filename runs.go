@@ -7,16 +7,48 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/imhassla/open-agent/internal/event"
 )
 
 func runsDirPath() string { return filepath.Join(homeDir(), ".open-agent", "runs") }
 
+// runMeta describes a one-shot (code/ask/research) run's directory — the
+// single-worker counterpart of a do-run's plan.json.
+type runMeta struct {
+	Goal string `json:"goal"`
+	Kind string `json:"kind"`
+}
+
+// ensureRunDir creates a fresh directory for a run id, de-duplicating with a
+// numeric suffix when two runs land in the same minute with the same slug
+// (otherwise their event traces silently interleave in one file).
+func ensureRunDir(id string) (string, string) {
+	_ = os.MkdirAll(runsDirPath(), 0o755)
+	base := id
+	for i := 2; ; i++ {
+		dir := filepath.Join(runsDirPath(), id)
+		if err := os.Mkdir(dir, 0o755); err == nil || !os.IsExist(err) {
+			return id, dir
+		}
+		id = fmt.Sprintf("%s-%d", base, i)
+	}
+}
+
+func loadMeta(path string) (runMeta, error) {
+	var m runMeta
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return m, err
+	}
+	return m, json.Unmarshal(data, &m)
+}
+
 type runStats struct {
-	steps, tokens, cached      int
-	cost                       float64
-	tasksStarted, tasksDone    int
+	steps, tokens, cached   int
+	cost                    float64
+	tasksStarted, tasksDone int
 }
 
 // scanEvents aggregates a run's events.jsonl trace.
@@ -78,6 +110,8 @@ func listRuns() {
 		goal, ntasks := "", 0
 		if p, err := loadPlan(filepath.Join(rd, "plan.json")); err == nil {
 			goal, ntasks = p.Goal, len(p.Tasks)
+		} else if m, merr := loadMeta(filepath.Join(rd, "meta.json")); merr == nil {
+			goal, ntasks = "["+m.Kind+"] "+m.Goal, 1
 		}
 		st := scanEvents(filepath.Join(rd, "events.jsonl"))
 		fmt.Printf("%-22s %5d %6d %10.4f  %s\n", id, ntasks, st.steps, st.cost, truncate(goal, 56))
@@ -94,6 +128,8 @@ func replayRun(id string) {
 	rd := filepath.Join(runsDirPath(), id)
 	if p, err := loadPlan(filepath.Join(rd, "plan.json")); err == nil {
 		fmt.Printf("run %s — %d tasks\ngoal: %s\n\n", id, len(p.Tasks), p.Goal)
+	} else if m, merr := loadMeta(filepath.Join(rd, "meta.json")); merr == nil {
+		fmt.Printf("run %s — one-shot %s\ngoal: %s\n\n", id, m.Kind, m.Goal)
 	}
 	f, err := os.Open(filepath.Join(rd, "events.jsonl"))
 	if err != nil {
@@ -115,6 +151,17 @@ func replayRun(id string) {
 			st.tokens += e.Tokens
 			st.cached += e.CachedTokens
 			st.cost += e.Cost
+			fmt.Printf("  step %d (%s · %d tok · ~$%.4f)\n", e.Step, e.Model, e.Tokens, e.Cost)
+		case "tool":
+			fmt.Printf("    → %s\n", e.Text)
+		case "toolres":
+			// Errors are the interesting part of a trace; successful results are
+			// one quiet line so the timeline stays scannable.
+			if strings.Contains(e.Text, " ERROR: ") {
+				fmt.Printf("    ✗ %s\n", e.Text)
+			} else {
+				fmt.Printf("      %s\n", e.Text)
+			}
 		case "task":
 			switch e.Text {
 			case "start":

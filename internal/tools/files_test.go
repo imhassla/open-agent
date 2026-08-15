@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -178,5 +179,133 @@ func TestWriteFilePreview(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(exist); string(got) != "old\n" {
 		t.Fatalf("preview mutated existing file: %q", got)
+	}
+}
+
+// A truncated whole-file read must tell the model how to continue: the marker
+// names the shown/total sizes and the exact 1-based line to resume from, and the
+// cut lands on a line boundary so that resume line is accurate.
+func TestReadFileTruncationMarker(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "big.txt")
+	var sb strings.Builder
+	for i := 1; i <= 500; i++ {
+		fmt.Fprintf(&sb, "line-%04d some padding text to make lines non-trivial\n", i)
+	}
+	content := sb.String()
+	writeFile(t, p, content)
+
+	out, err := ReadFile(p, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "…[truncated:") {
+		t.Fatalf("missing truncation marker: %q", out[len(out)-200:])
+	}
+	if !strings.Contains(out, fmt.Sprintf("of %d chars", len(content))) {
+		t.Fatalf("marker lacks total chars: %q", out[len(out)-200:])
+	}
+	// The marker's "Continue with read_file start=N" must point at the first
+	// UNSHOWN line: shown body ends at a line boundary, so N = shown lines + 1.
+	body := out[:strings.Index(out, "\n…[truncated:")]
+	shownLines := strings.Count(body, "\n") + 1
+	if !strings.Contains(out, fmt.Sprintf("start=%d]", shownLines+1)) {
+		t.Fatalf("continue line mismatch (shown %d lines): %q", shownLines, out[len(out)-200:])
+	}
+	// Small files are returned verbatim, no marker.
+	small, _ := ReadFile(p, len(content)+1)
+	if strings.Contains(small, "truncated") {
+		t.Fatalf("unexpected marker on full read")
+	}
+}
+
+// A line-range read is bounded too: a huge requested range stops at rangeMaxChars
+// with a marker naming the exact resume line — start=1 on a big file must not
+// dump the whole file.
+func TestReadFileLinesRangeCap(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "big.txt")
+	var sb strings.Builder
+	line := strings.Repeat("x", 200)
+	total := rangeMaxChars/len(line) + 100 // comfortably past the cap
+	for i := 0; i < total; i++ {
+		sb.WriteString(line + "\n")
+	}
+	writeFile(t, p, sb.String())
+
+	out, err := ReadFileLines(p, 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) > rangeMaxChars+len(line)+400 {
+		t.Fatalf("range output not capped: %d chars", len(out))
+	}
+	if !strings.Contains(out, "…[range truncated at line ") {
+		t.Fatalf("missing range truncation marker: %q", out[len(out)-200:])
+	}
+	// The marker names the resume line: "Continue with start=N" where N-1 is the
+	// last emitted numbered line.
+	i := strings.LastIndex(out, "start=")
+	var resume int
+	if _, err := fmt.Sscanf(out[i:], "start=%d]", &resume); err != nil || resume < 2 {
+		t.Fatalf("bad resume line in marker: %q", out[i:])
+	}
+	if !strings.Contains(out, fmt.Sprintf("%6d\t", resume-1)) {
+		t.Fatalf("resume %d does not follow the last emitted line", resume)
+	}
+	// A modest explicit range is untouched.
+	modest, _ := ReadFileLines(p, 5, 8)
+	if strings.Contains(modest, "range truncated") {
+		t.Fatalf("modest range wrongly truncated")
+	}
+}
+
+// Models routinely glue a module/import prefix onto file paths. An unambiguous
+// mis-path must resolve in the SAME tool call (flagged with a note); an ambiguous
+// one must error listing candidates; edit_file must suggest but never redirect.
+func TestMisPathedFileResolution(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "pipeline.go"), "package p\n// marker-xyz\n")
+	writeFile(t, filepath.Join(dir, "sub", "other.go"), "package q\n")
+	old, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(old)
+
+	// Unambiguous: prefixed path resolves, note names both paths.
+	out, err := ReadFile("oalab/pipeline/pipeline.go", 0)
+	if err != nil {
+		t.Fatalf("expected resolution, got %v", err)
+	}
+	if !strings.Contains(out, "# note:") || !strings.Contains(out, "marker-xyz") {
+		t.Fatalf("missing note or content: %q", out)
+	}
+
+	// Line-range variant resolves too and shows the REAL path in its header.
+	ranged, err := ReadFileLines("mod/pkg/pipeline.go", 1, 1)
+	if err != nil || !strings.Contains(ranged, "pipeline.go (lines") {
+		t.Fatalf("range resolution failed: %v %q", err, ranged)
+	}
+
+	// Ambiguous basename (exists only in TWO subdirs, no strip-suffix match):
+	// error lists the candidates instead of guessing.
+	writeFile(t, filepath.Join(dir, "sub1", "dup.go"), "package a\n")
+	writeFile(t, filepath.Join(dir, "sub2", "dup.go"), "package b\n")
+	if _, err := ReadFile("zz/dup.go", 0); err == nil || !strings.Contains(err.Error(), "similar files") {
+		t.Fatalf("expected ambiguity error, got %v", err)
+	}
+
+	// edit_file NEVER redirects: suggestion in the error, file untouched.
+	_, err = EditFile("wrong/other.go", "package q", "package r", false)
+	if err == nil || !strings.Contains(err.Error(), "similar files") {
+		t.Fatalf("expected suggestion error, got %v", err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "sub", "other.go"))
+	if string(data) != "package q\n" {
+		t.Fatalf("edit_file redirected to a near-match: %q", data)
+	}
+
+	// A genuinely unknown name still errors with plain ENOENT.
+	if _, err := ReadFile("nowhere/unknown-name.go", 0); !os.IsNotExist(err) {
+		t.Fatalf("expected bare ENOENT, got %v", err)
 	}
 }

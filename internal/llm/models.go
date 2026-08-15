@@ -11,7 +11,7 @@ import (
 	"sync"
 )
 
-// Model slugs on OpenRouter, grouped by family (verified 2026-07-20).
+// Model slugs on OpenRouter, grouped by family (verified 2026-08-15).
 const (
 	// Kimi (Moonshot)
 	ModelFlagship = "moonshotai/kimi-k2.6"        // workhorse: long-horizon coding + multi-agent
@@ -34,14 +34,6 @@ const (
 	GoogleAsk   = "google/gemini-3.1-flash-lite" // fast + cheap, 1M ctx
 	GoogleCheap = "google/gemma-4-26b-a4b-it"    // open-weight cheap bulk
 
-	// Free tier (":free" variants; $0 but rate-limited by OpenRouter — with a
-	// positive credit balance the daily free-request quota is much higher).
-	FreeCode  = "cohere/north-mini-code:free"            // coding-focused
-	FreeAsk   = "tencent/hy3:free"                       // general
-	FreePlan  = "nvidia/nemotron-3-super-120b-a12b:free" // reasoner, 1M ctx (the ultra-550b free variant is saturated/flaky — avoid for the plan single-point)
-	FreeJudge = "nvidia/nemotron-3-super-120b-a12b:free" // distinct from FreeCode (the cross-family consensus invariant)
-	FreeCheap = "google/gemma-4-26b-a4b-it:free"         // bulk
-
 	// Grok (xAI)
 	GrokFlagship = "x-ai/grok-4.3"              // general workhorse, 1M ctx
 	GrokReason   = "x-ai/grok-4.20"             // reasoning flagship, 2M ctx
@@ -53,11 +45,14 @@ const (
 	DeepSeekReason = "deepseek/deepseek-r1-0528"  // dedicated reasoner
 	DeepSeekCheap  = "deepseek/deepseek-v4-flash" // cheap bulk
 
-	// Qwen (Apache-2.0, long context)
-	QwenCoder    = "qwen/qwen3-coder"                   // strong coding, 1M ctx
-	QwenReason   = "qwen/qwen3-235b-a22b-thinking-2507" // cheap reasoner
-	QwenFlagship = "qwen/qwen3-max"                     // premium general
-	QwenCheap    = "qwen/qwen3-coder-flash"             // cheap bulk
+	// Qwen (long context; refreshed to the 3.7/3.8 generation 2026-08-15)
+	QwenCoder    = "qwen/qwen3-coder-next"   // newest coder line, 262K ctx, cheaper than qwen3-coder
+	QwenReason   = "qwen/qwen3-max-thinking" // dedicated reasoner
+	QwenFlagship = "qwen/qwen3.7-plus"       // balanced general workhorse, 1M ctx
+	QwenCheap    = "qwen/qwen3.7-flash"      // very cheap bulk, 1M ctx
+	// QwenMax is premium-priced ($2/$6 per M) — like ModelK3, deliberately NOT in
+	// any default role route; pin it explicitly with -m for frontier-tier tasks.
+	QwenMax = "qwen/qwen3.8-max" // frontier flagship, 1M ctx
 
 	// MiniMax (cheapest credible coding tier)
 	MiniMaxCoder    = "minimax/minimax-m2.5" // frontier-class coding at low price
@@ -88,13 +83,6 @@ var pricing = map[string][2]float64{
 	GoogleAsk:   {0.00000025, 0.0000015},
 	GoogleCheap: {0.00000007, 0.00000034},
 
-	// Free-tier models: $0. Present in the table so KnownModel recognizes them
-	// (RefreshPricing leaves zero-priced entries untouched).
-	FreeCode:  {0, 0},
-	FreeAsk:   {0, 0},
-	FreePlan:  {0, 0}, // == FreeJudge (same slug)
-	FreeCheap: {0, 0},
-
 	GrokFlagship: {0.00000125, 0.0000025},
 	GrokReason:   {0.00000125, 0.0000025},
 	GrokCode:     {0.000001, 0.000002},
@@ -104,10 +92,11 @@ var pricing = map[string][2]float64{
 	DeepSeekReason: {0.0000005, 0.00000215},
 	DeepSeekCheap:  {0.000000098, 0.000000196},
 
-	QwenCoder:    {0.0000003, 0.000001},
-	QwenReason:   {0.0000003, 0.000003},
-	QwenFlagship: {0.00000078, 0.0000039},
-	QwenCheap:    {0.000000195, 0.000000975},
+	QwenCoder:    {0.00000012, 0.0000008},
+	QwenReason:   {0.00000078, 0.0000039},
+	QwenFlagship: {0.00000032, 0.00000128},
+	QwenCheap:    {0.00000003, 0.00000013},
+	QwenMax:      {0.000002, 0.000006},
 
 	MiniMaxCoder:    {0.00000015, 0.0000009},
 	MiniMaxReason:   {0.0000003, 0.0000012},

@@ -166,8 +166,12 @@ open-agent sandbox ls ; open-agent sandbox rm --env ci
   $0.013); and a multi-file FEATURE on a real repo under a seeded env + locked
   egress — added a CLI module + tests, full suite stayed green, no regressions.
 
-Inspection: `open-agent runs` lists past do-runs; `open-agent replay <run_id>` replays a
-trace; the full JSONL event trace lives at `~/.open-agent/runs/<run_id>/events.jsonl`.
+Inspection: `open-agent runs` lists past runs — do-runs AND one-shot code/ask/research
+runs (every one-shot now returns its `run_id` in the envelope too). `open-agent replay
+<run_id>` replays a step-by-step timeline: each tool call with an argument digest
+(`read_file(path=… start=…)`), each result size, and every tool ERROR verbatim — the
+first thing to check when a worker returns ok:false or burns more steps than expected.
+The full JSONL event trace lives at `~/.open-agent/runs/<run_id>/events.jsonl`.
 
 ## Delegation policy (what to send vs keep)
 
@@ -196,9 +200,9 @@ the worker's diff before accepting it**.
 
 ## Model-tier policy (validated 2026-07 by two arbiter+worker experiments)
 
-- **:free models ($0)** — no longer a separate mode: the router tries them first
-  automatically and escalates away per task class as failures accumulate. When PINNING
-  one manually (-m …:free), expect them to handle only mechanical, stateless transforms
+- **:free models ($0)** — dropped from the router ladder entirely (field-tested too
+  weak: wrong-logic output, wasted cold-start retries). Available only by PINNING
+  one manually (-m …:free); expect them to handle only mechanical, stateless transforms
   (CSS restyles, renames, boilerplate) and small NEW files with tests; they fail at
   surgical edits of large files and at logic matching real API schemas ("silently
   empty panels" — machine-verify everything).
