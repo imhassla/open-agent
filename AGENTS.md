@@ -169,6 +169,14 @@ open-agent sandbox ls ; open-agent sandbox rm --env ci
   $0.013); and a multi-file FEATURE on a real repo under a seeded env + locked
   egress — added a CLI module + tests, full suite stayed green, no regressions.
 
+Recurring jobs: `open-agent schedule add --every 6h code "run go test ./... and fix any
+failure"` registers a job; `open-agent schedule run` is a foreground daemon that fires due
+jobs as subprocesses (crash-isolated), logging each envelope to
+`~/.open-agent/schedule-logs/<id>.jsonl`. Intervals are Go durations (30m, 6h) or
+hourly/daily/weekly; a never-run job fires on the first tick. `schedule list/pause/resume/
+remove` manage jobs (edits are picked up live by a running daemon). For OS-level
+scheduling instead of the daemon, a plain cron entry calling the verb directly also works.
+
 Nightly self-improvement: `open-agent improve --changed --max-cost 0.30` reviews the
 packages changed in the last 24h through the verified pipeline, fixes confirmed
 findings (each gated by the full test suite AND a cross-family semantic diff review),

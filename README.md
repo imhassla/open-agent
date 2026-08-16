@@ -95,6 +95,7 @@ Watch it live in `open-agent dashboard` → Router ladder.
 | `research`                             | read-only web research (grounded, cited search) |
 | `do`                                   | plan → parallel multi-model DAG → verify        |
 | `improve`                              | review → fix → verify cycle (fixes uncommitted) |
+| `schedule`                             | recurring jobs: add/list/remove + run daemon    |
 | `sandbox`                              | run as root in a hardened box                   |
 | `dashboard`                            | local observability web UI                      |
 | `models` / `runs` / `replay` / `bench` | introspection & self-eval                       |

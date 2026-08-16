@@ -201,6 +201,12 @@ func main() {
 		return
 	}
 
+	// `schedule` — recurring jobs (add/list/remove/pause/resume/run daemon).
+	if cmd == "schedule" {
+		runSchedule(positional, opts)
+		return
+	}
+
 	// Unified interactive session (#18). Everything that isn't a reserved tooling
 	// subcommand (models/version/runs/replay/bench/do, handled above) lands here.
 	switch cmd {
@@ -394,6 +400,7 @@ type options struct {
 	planModel    string
 	reviewModel  string // improve: cross-family diff-review judge override
 	changed      bool   // improve: focus = packages changed in the last 24h
+	every        string // schedule: recurring interval (30m, 6h, daily)
 	family       string
 	families     string
 	mcp          string
@@ -444,6 +451,8 @@ func parseArgs(args []string) (options, []string, error) {
 			o.reviewModel, err = next(&i, args[i])
 		case "--changed":
 			o.changed = true
+		case "--every":
+			o.every, err = next(&i, args[i])
 		case "-f", "--family":
 			o.family, err = next(&i, args[i])
 		case "--families":
@@ -608,6 +617,7 @@ Commands:
   runs      List recorded do-runs (tasks, steps, cost) newest first
   replay    Replay a run's event trace + cache-hit summary: replay <run-id>
   improve   Review → fix → verify in one shot: improve [focus] (fixes stay uncommitted)
+  schedule  Recurring jobs: schedule add --every 6h <verb> "task" · list · remove · run
   dashboard Local web observability over ~/.open-agent (--port, default 8787)
   self-review  Review this codebase for real defects (verified: reviewer + adversarial
             verification); optional focus path, e.g. self-review internal/rating
