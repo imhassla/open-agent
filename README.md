@@ -49,8 +49,21 @@ make install-treesitter          # optional: richer multi-language repo_map (CGo
 
 Releases are opt-in: put `[release]` (patch), `[release:minor]`, or `[release:major]` in a commit message on `main` and CI tags + builds + publishes it and auto-bumps the Homebrew tap. A manual `git tag vX.Y.Z && git push` also works: `git tag v0.1.0 && git push origin v0.1.0`.
 
-Set your OpenRouter key (first match wins): `OPENROUTER_KEY` env var, a `.env` in the
-working directory, or `~/.config/open-agent/.env`. See `.env.example`.
+### First run — set your OpenRouter key
+
+open-agent needs an OpenRouter API key ([get one](https://openrouter.ai/keys)). Set it
+once, machine-wide:
+
+```sh
+mkdir -p ~/.config/open-agent
+echo 'OPENROUTER_KEY=sk-or-...' > ~/.config/open-agent/.env
+chmod 600 ~/.config/open-agent/.env
+open-agent ask "reply with exactly: OK"   # verify
+```
+
+Resolution order (first match wins): the `OPENROUTER_KEY` env var → a `.env` in the
+working directory → `~/.config/open-agent/.env`. For a single shell session you can just
+`export OPENROUTER_KEY=sk-or-...` instead. See `.env.example`.
 
 ## Usage
 
