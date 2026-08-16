@@ -47,7 +47,7 @@ make install                     # builds + installs (single binary)
 make install-treesitter          # optional: richer multi-language repo_map (CGo tree-sitter)
 ```
 
-Releases are built by CI on version tags: `git tag v0.1.0 && git push origin v0.1.0`.
+Releases are auto-versioned by CI on every push to main (Homebrew tap auto-bump verified). Manual tags also work: `git tag v0.1.0 && git push origin v0.1.0`.
 
 Set your OpenRouter key (first match wins): `OPENROUTER_KEY` env var, a `.env` in the
 working directory, or `~/.config/open-agent/.env`. See `.env.example`.
