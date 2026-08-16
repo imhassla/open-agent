@@ -50,26 +50,36 @@ jobs:
             # Manual tag push: use it verbatim.
             VERSION="${GITHUB_REF_NAME#v}"
           else
-            # Branch push: bump the latest v* tag by the level in the marker
-            # ([release]/[release:patch] → patch, [release:minor], [release:major]).
-            msg="$(git log -1 --format=%B)"
+            # Branch push: the marker must be a LINE OF ITS OWN — [release],
+            # [release:patch], [release:minor], or [release:major] — so merely
+            # mentioning it in prose (e.g. describing the policy) never triggers.
+            # The coarse job-level `if` may pass on such prose; this precise
+            # check is the real gate and sets release=false to skip cleanly.
+            marker="$(git log -1 --format=%B | grep -m1 -xE '\[release(:(patch|minor|major))?\]' || true)"
+            if [[ -z "${marker}" ]]; then
+              echo "release=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::no [release] marker line in the commit — skipping release"
+              exit 0
+            fi
             latest="$(git tag --list 'v*' --sort=-v:refname | head -n1)"
             latest="${latest:-v0.0.0}"
             base="${latest#v}"
             IFS=. read -r major minor patch <<< "${base}"
-            case "${msg}" in
-              *'[release:major]'*) major=$((major + 1)); minor=0; patch=0 ;;
-              *'[release:minor]'*) minor=$((minor + 1)); patch=0 ;;
-              *)                   patch=$((patch + 1)) ;;
+            case "${marker}" in
+              '[release:major]') major=$((major + 1)); minor=0; patch=0 ;;
+              '[release:minor]') minor=$((minor + 1)); patch=0 ;;
+              *)                 patch=$((patch + 1)) ;;
             esac
             VERSION="${major}.${minor}.${patch}"
             git tag "v${VERSION}"
             git push origin "v${VERSION}"
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "release=true" >> "$GITHUB_OUTPUT"
           echo "Releasing v${VERSION}"
 
       - name: Build release binaries
+        if: steps.ver.outputs.release == 'true'
         run: |
           set -euo pipefail
           VERSION="${{ steps.ver.outputs.version }}"
@@ -95,6 +105,7 @@ jobs:
           cat dist/checksums.txt
 
       - name: Publish GitHub Release
+        if: steps.ver.outputs.release == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.ver.outputs.version }}
@@ -104,6 +115,7 @@ jobs:
             dist/checksums.txt
 
       - name: Bump Homebrew tap formula
+        if: steps.ver.outputs.release == 'true'
         env:
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           VERSION: ${{ steps.ver.outputs.version }}
