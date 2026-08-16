@@ -164,6 +164,12 @@ func Crawl(ctx context.Context, start string, maxPages int) (string, error) {
 	shapeCount[canonShape(base)]++ // the seed consumes one unit of its own shape budget
 
 	for len(frontier) > 0 {
+		// Bail the moment the run is cancelled/deadlined — otherwise the whole
+		// remaining frontier is drained as fast-failing cancelled requests
+		// instead of returning what was gathered.
+		if ctx.Err() != nil {
+			break
+		}
 		mu.Lock()
 		done := len(out) >= maxPages
 		mu.Unlock()

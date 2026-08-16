@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestProbe(t *testing.T) {
@@ -122,5 +123,29 @@ func TestCrawlValueRoutingNotCollapsed(t *testing.T) {
 		if !strings.Contains(out, "page="+p) {
 			t.Errorf("router endpoint page=%s was collapsed/dropped:\n%s", p, out)
 		}
+	}
+}
+
+// A cancelled context makes Crawl return promptly with what it has, instead of
+// draining the whole frontier as fast-failing cancelled requests.
+func TestCrawlCancelledContextStopsEarly(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `<title>P</title><a href="/x%d">x</a><a href="/y%d">y</a>`, len(r.URL.Path), len(r.URL.Path)+1)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled
+	done := make(chan struct{})
+	go func() {
+		_, _ = Crawl(ctx, srv.URL+"/", 500)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Crawl did not return promptly on a cancelled context")
 	}
 }

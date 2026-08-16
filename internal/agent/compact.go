@@ -30,15 +30,24 @@ func (a *Agent) compact(ctx context.Context, bud *budget.Budget) error {
 		return nil // too short to bother
 	}
 
+	// The preamble (date, working directory, fault hints) must SURVIVE compaction
+	// verbatim: summarizing it away silently re-enables the exact failure modes it
+	// exists to prevent (hallucinated absolute paths, training-cutoff anchoring)
+	// for every step after the first compaction of a long run.
+	head := 1 // system
+	if a.Preamble != "" && len(a.msgs) > 1 && a.msgs[1].Role == "user" && a.msgs[1].Content == a.Preamble {
+		head = 2 // system + preamble
+	}
+
 	keepFrom := len(a.msgs) - compactKeepRecent
-	for keepFrom > 1 && a.msgs[keepFrom].Role == "tool" {
+	for keepFrom > head && a.msgs[keepFrom].Role == "tool" {
 		keepFrom-- // never start the tail on a tool result (its tool_call must precede it)
 	}
-	if keepFrom <= 1 {
+	if keepFrom <= head {
 		return nil
 	}
 
-	middle := a.msgs[1:keepFrom]
+	middle := a.msgs[head:keepFrom]
 	if len(middle) == 0 {
 		return nil
 	}
@@ -86,8 +95,8 @@ func (a *Agent) compact(ctx context.Context, bud *budget.Budget) error {
 		return fmt.Errorf("compaction produced an empty summary")
 	}
 
-	compacted := make([]llm.Message, 0, 2+compactKeepRecent)
-	compacted = append(compacted, a.msgs[0]) // system
+	compacted := make([]llm.Message, 0, head+1+compactKeepRecent)
+	compacted = append(compacted, a.msgs[:head]...) // system (+ preamble, verbatim)
 	compacted = append(compacted, llm.Message{Role: "user", Content: "[Summary of earlier context]\n" + summary})
 	compacted = append(compacted, a.msgs[keepFrom:]...)
 	a.msgs = compacted

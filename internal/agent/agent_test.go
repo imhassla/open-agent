@@ -582,3 +582,41 @@ func TestPoisonedToolCallMatcher(t *testing.T) {
 		}
 	}
 }
+
+// The preamble (date/cwd/fault hints) must survive compaction VERBATIM at
+// msgs[1] — summarizing it away re-enables the failure modes it prevents for
+// every post-compaction step.
+func TestCompactPreservesPreamble(t *testing.T) {
+	const pre = "Today's date: 2026-08-16. Working directory: /x."
+	a := &Agent{
+		Preamble: pre,
+		Client: &scriptDoer{fn: func(int) (*llm.Response, error) {
+			return &llm.Response{Message: llm.Message{Role: "assistant", Content: "SUMMARY"}}, nil
+		}},
+	}
+	a.msgs = append(a.msgs,
+		llm.Message{Role: "system", Content: "SYS"},
+		llm.Message{Role: "user", Content: pre},
+	)
+	for i := 0; i < 10; i++ {
+		a.msgs = append(a.msgs,
+			llm.Message{Role: "user", Content: fmt.Sprintf("u%d", i)},
+			llm.Message{Role: "assistant", Content: fmt.Sprintf("a%d", i)},
+		)
+	}
+	if err := a.compact(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if a.msgs[0].Content != "SYS" || a.msgs[1].Content != pre {
+		t.Fatalf("preamble not preserved verbatim at msgs[1]: %q", a.msgs[1].Content)
+	}
+	if !strings.Contains(a.msgs[2].Content, "SUMMARY") {
+		t.Fatalf("summary not at msgs[2]: %q", a.msgs[2].Content)
+	}
+	// The preamble must not have been folded into the summarized middle.
+	for _, m := range a.msgs[2:] {
+		if m.Content != pre && strings.Contains(m.Content, "Working directory: /x") && !strings.Contains(m.Content, "SUMMARY") {
+			t.Fatalf("preamble leaked into other messages")
+		}
+	}
+}
