@@ -232,3 +232,43 @@ func TestWorktreeBaselineDeletedTest(t *testing.T) {
 		t.Errorf("deleting the only test → no test-delta → green baseline, got failed=%v established=%v", failed, established)
 	}
 }
+
+// GitStatus must respect .gitignore: ignored-but-present files are not dirt.
+// (Field defect: reports/ made every consumer see a dirty tree — from clean
+// checks to the shadow-package gate.)
+func TestGitStatusRespectsGitignore(t *testing.T) {
+	dir := t.TempDir()
+	repo, err := git.PlainInit(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "main.go"), "package main\n")
+	writeFile(t, filepath.Join(dir, ".gitignore"), "junk/\n*.log\n")
+	wt, _ := repo.Worktree()
+	for _, f := range []string{"main.go", ".gitignore"} {
+		if _, aerr := wt.Add(f); aerr != nil {
+			t.Fatal(aerr)
+		}
+	}
+	if _, cerr := wt.Commit("seed", &git.CommitOptions{
+		Author: &object.Signature{Name: "t", Email: "t@t", When: time.Unix(1000, 0)},
+	}); cerr != nil {
+		t.Fatal(cerr)
+	}
+	writeFile(t, filepath.Join(dir, "junk", "x.txt"), "ignored\n")
+	writeFile(t, filepath.Join(dir, "trace.log"), "ignored too\n")
+
+	st, serr := GitStatus(dir)
+	if serr != nil {
+		t.Fatal(serr)
+	}
+	if st != "clean" {
+		t.Fatalf("ignored files reported as dirt:\n%s", st)
+	}
+	// A genuinely untracked file still shows.
+	writeFile(t, filepath.Join(dir, "new.go"), "package main\n")
+	st, _ = GitStatus(dir)
+	if !strings.Contains(st, "new.go") || strings.Contains(st, "junk") {
+		t.Fatalf("status wrong:\n%s", st)
+	}
+}

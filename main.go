@@ -392,6 +392,8 @@ func printEnvelope(env resultEnvelope) {
 type options struct {
 	model        string
 	planModel    string
+	reviewModel  string // improve: cross-family diff-review judge override
+	changed      bool   // improve: focus = packages changed in the last 24h
 	family       string
 	families     string
 	mcp          string
@@ -438,6 +440,10 @@ func parseArgs(args []string) (options, []string, error) {
 			o.model, err = next(&i, args[i])
 		case "--plan-model":
 			o.planModel, err = next(&i, args[i])
+		case "--review-model":
+			o.reviewModel, err = next(&i, args[i])
+		case "--changed":
+			o.changed = true
 		case "-f", "--family":
 			o.family, err = next(&i, args[i])
 		case "--families":
@@ -668,6 +674,13 @@ func listModels() {
 			orchestrator.RolePlan, orchestrator.RoleJudge, orchestrator.RoleCheap,
 		} {
 			fmt.Printf("  %-9s %s\n", role, routes[role].Model)
+		}
+	}
+	// Fault profile: HOW models misuse tools in recent runs (recovered errors
+	// inside successful runs included) — the dimension pass-rates cannot see.
+	if recent, rerr := telemetry.Open("").Recent(50, ""); rerr == nil {
+		if s := telemetry.FaultSummary(recent); s != "" {
+			fmt.Printf("\nrecent tool-fault profile (last %d runs):\n%s\n", len(recent), s)
 		}
 	}
 }

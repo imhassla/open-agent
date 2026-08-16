@@ -66,25 +66,47 @@ type Observation struct {
 
 // Update folds one observation into the (role, model) EWMA and persists.
 func (s *Store) Update(role, model string, passed bool, costUSD float64) {
-	s.mu.Lock()
-	s.foldLocked(role, model, passed, costUSD)
-	s.save()
-	s.mu.Unlock()
+	s.UpdateMany([]Observation{{Bucket: role, Model: model, Passed: passed, CostUSD: costUSD}})
 }
 
 // UpdateMany folds several observations under ONE lock and persists ONCE — so a
 // caller recording into multiple buckets for a single task (e.g. the coarse+fine
 // dual-write) triggers a single serialize+write+rename instead of N.
+//
+// Cross-process safety: the fold runs as lock → reload → fold → save under an
+// advisory file lock, so concurrent open-agent processes (a bench matrix beside
+// one-shot workers) can no longer lose each other's recorded outcomes — the
+// on-disk state is re-read at the last moment and only THIS call's observations
+// are layered on top. In-memory readers (picks) tolerate a slightly stale copy.
 func (s *Store) UpdateMany(obs []Observation) {
 	if len(obs) == 0 {
 		return
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.path != "" {
+		if fl, err := lockRatings(s.path); err == nil {
+			defer fl.unlock()
+			s.reloadLocked()
+		}
+	}
 	for _, o := range obs {
 		s.foldLocked(o.Bucket, o.Model, o.Passed, o.CostUSD)
 	}
 	s.save()
-	s.mu.Unlock()
+}
+
+// reloadLocked replaces the in-memory stats with the on-disk state (best-effort).
+// Caller MUST hold s.mu (and, for its purpose, the file lock).
+func (s *Store) reloadLocked() {
+	data, err := os.ReadFile(s.path)
+	if err != nil {
+		return
+	}
+	var loaded map[string]*Stat
+	if json.Unmarshal(data, &loaded) == nil && loaded != nil {
+		s.stats = loaded
+	}
 }
 
 // costOutlierFactor caps a single cost observation at this multiple of the

@@ -30,11 +30,10 @@ func TestTamperCheck(ctx context.Context, root, command string, timeoutSec int) 
 	if err != nil {
 		return false, false
 	}
-	wt, err := repo.Worktree()
+	_, st, err := worktreeStatus(repo)
 	if err != nil {
 		return false, false
 	}
-	st, err := wt.Status()
 	if err != nil {
 		return false, false
 	}

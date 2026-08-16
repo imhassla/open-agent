@@ -49,11 +49,7 @@ func materializeWithChanges(root string, restoreToHEAD func(path string) bool) (
 	if err != nil {
 		return "", func() {}, false
 	}
-	wt, err := repo.Worktree()
-	if err != nil {
-		return "", func() {}, false
-	}
-	st, err := wt.Status()
+	wt, st, err := worktreeStatus(repo)
 	if err != nil {
 		return "", func() {}, false
 	}

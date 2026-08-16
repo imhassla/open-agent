@@ -120,11 +120,10 @@ func changedTestFiles(root string) []string {
 	if err != nil {
 		return nil
 	}
-	wt, err := repo.Worktree()
+	_, st, err := worktreeStatus(repo)
 	if err != nil {
 		return nil
 	}
-	st, err := wt.Status()
 	if err != nil {
 		return nil
 	}

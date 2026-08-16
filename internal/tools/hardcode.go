@@ -33,11 +33,10 @@ func HardcodeCheck(root string) (hardcoded bool, evidence string, ran bool) {
 	if err != nil {
 		return false, "", false
 	}
-	wt, err := repo.Worktree()
+	_, st, err := worktreeStatus(repo)
 	if err != nil {
 		return false, "", false
 	}
-	st, err := wt.Status()
 	if err != nil {
 		return false, "", false
 	}

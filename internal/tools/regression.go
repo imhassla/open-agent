@@ -30,11 +30,10 @@ func RegressionCheck(ctx context.Context, root string, timeoutSec int) (regresse
 	if err != nil {
 		return nil, false
 	}
-	wt, err := repo.Worktree()
+	wt, st, err := worktreeStatus(repo)
 	if err != nil {
 		return nil, false
 	}
-	st, err := wt.Status()
 	if err != nil {
 		return nil, false
 	}

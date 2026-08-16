@@ -215,3 +215,22 @@ func TestSeedIfAbsent(t *testing.T) {
 		t.Error("SeedIfAbsent must NOT overwrite an existing ratings file")
 	}
 }
+
+// Two Stores on the same path (simulating two processes): each records its own
+// bucket; NEITHER update may be lost. Without the lock+reload-before-fold, the
+// second store's whole-state save silently dropped the first store's bucket.
+func TestConcurrentStoresDoNotLoseUpdates(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "ratings.json")
+	s1 := Open(p)
+	s2 := Open(p) // opened BEFORE s1 records — stale in-memory copy
+	s1.Update("code", "model-a", true, 0.01)
+	s2.Update("ask", "model-b", true, 0.02)
+
+	fresh := Open(p)
+	if _, ok := fresh.Get("code", "model-a"); !ok {
+		t.Fatalf("s1's update lost after s2 saved")
+	}
+	if _, ok := fresh.Get("ask", "model-b"); !ok {
+		t.Fatalf("s2's update missing")
+	}
+}

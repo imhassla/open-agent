@@ -149,7 +149,12 @@ func BuildWorker(role Role, d *Deps, o Options) (*agent.Agent, error) {
 	}
 	if d.Tlog != nil {
 		if recent, err := d.Tlog.Recent(20, string(role)); err == nil && len(recent) > 0 {
-			if hints := telemetry.Hints(recent); len(hints) > 0 {
+			// Fault-class hints are MODEL-targeted self-conditioning: the picked
+			// model is told how it specifically misused tools in recent runs
+			// (malformed JSON args, invented paths…) — failure modes that hide
+			// inside successful runs and that pass-rates never surface.
+			hints := append(telemetry.Hints(recent), telemetry.FaultHints(recent, model)...)
+			if len(hints) > 0 {
 				var sb strings.Builder
 				if preamble != "" {
 					sb.WriteString(preamble + "\n\n")

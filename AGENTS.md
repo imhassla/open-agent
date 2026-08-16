@@ -169,6 +169,13 @@ open-agent sandbox ls ; open-agent sandbox rm --env ci
   $0.013); and a multi-file FEATURE on a real repo under a seeded env + locked
   egress — added a CLI module + tests, full suite stayed green, no regressions.
 
+Nightly self-improvement: `open-agent improve --changed --max-cost 0.30` reviews the
+packages changed in the last 24h through the verified pipeline, fixes confirmed
+findings (each gated by the full test suite AND a cross-family semantic diff review),
+and leaves everything uncommitted for morning review. Cron recipe:
+`0 3 * * * cd <repo> && open-agent improve --changed --max-cost 0.30 >> ~/.open-agent/nightly.log 2>&1`
+— publish only after reviewing `git diff` and running `make preflight`.
+
 Inspection: `open-agent runs` lists past runs — do-runs AND one-shot code/ask/research
 runs (every one-shot now returns its `run_id` in the envelope too). `open-agent replay
 <run_id>` replays a step-by-step timeline: each tool call with an argument digest

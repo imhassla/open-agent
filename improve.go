@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -56,6 +58,19 @@ func runImprove(deps *orchestrator.Deps, opts options, focus string) {
 	scope := "the whole codebase"
 	if focus != "" {
 		scope = focus
+	}
+	// --changed (the nightly-loop primitive): focus on the packages that
+	// actually moved in the last 24h — where new defects live — instead of a
+	// hand-picked scope. One review cycle over the whole list keeps the
+	// clean-tree/uncommitted-fixes contract intact.
+	if opts.changed {
+		dirs := changedGoDirs(ctx)
+		if len(dirs) == 0 {
+			fmt.Println("improve --changed: no Go packages changed in the last 24h — nothing to review.")
+			return
+		}
+		scope = "the packages changed in the last 24h: " + strings.Join(dirs, ", ") +
+			" — review ONLY code in these directories, prioritizing the most recently modified files"
 	}
 	arch, _ := tools.RepoMap(".", nil, 12000)
 	if len(arch) > 8000 {
@@ -120,16 +135,29 @@ func runImprove(deps *orchestrator.Deps, opts options, focus string) {
 			res.Reverted = true
 			continue
 		}
-		// Test gate: the whole suite must stay green after each fix.
+		// Gate 1: the whole suite must stay green after each fix.
 		if out, terr := tools.BashExec(ctx, "go build ./... && go test ./...", 300); terr != nil || strings.HasPrefix(out, "exit error:") {
 			res.Detail = "test gate failed: " + truncate(out, 300)
 			gitRevertAll()
 			res.Reverted = true
 			fmt.Fprintf(os.Stderr, "  ↩ reverted (gate failed)\n")
+			results = append(results, res)
+			continue
+		}
+		// Gate 2: cross-family semantic diff review. A green suite is necessary,
+		// never sufficient — field data: 2 of 3 gate-passing worker fixes carried
+		// regressions no test sees (a stream silently turned into buffered replay;
+		// a lock released mid-read). A judge from a DIFFERENT model family reads
+		// the diff for exactly that class.
+		if verdictReason, ok := reviewDiff(ctx, deps, opts.reviewModel, ag.Model, f, bud); !ok {
+			res.Detail = "diff review rejected: " + truncate(verdictReason, 300)
+			gitRevertAll()
+			res.Reverted = true
+			fmt.Fprintf(os.Stderr, "  ↩ reverted (diff review: %s)\n", truncate(verdictReason, 120))
 		} else {
 			res.Fixed = true
 			fixed++
-			fmt.Fprintf(os.Stderr, "  ✓ fixed (suite green)\n")
+			fmt.Fprintf(os.Stderr, "  ✓ fixed (suite green, diff review passed)\n")
 		}
 		results = append(results, res)
 	}
@@ -157,4 +185,90 @@ func runImprove(deps *orchestrator.Deps, opts options, focus string) {
 // for a fix that failed its gate. Safe because improve refuses to start dirty.
 func gitRevertAll() {
 	_, _ = tools.BashExec(context.Background(), "git checkout -- . && git clean -fd -e reports/", 60)
+}
+
+// reviewDiff is improve's third gate: a judge from a DIFFERENT model family than
+// the fixing worker reads the uncommitted diff and hunts semantic regressions
+// the test suite cannot see (changed I/O semantics, resource leaks, lock-scope
+// changes, dropped error paths, scope creep beyond the finding). Returns
+// (reason, approved). Fail-open on infrastructure errors — the review is a
+// quality gate, not an availability dependency — but a parsed rejection reverts.
+func reviewDiff(ctx context.Context, deps *orchestrator.Deps, override, fixerModel string, f finding, bud *budget.Budget) (string, bool) {
+	diff, err := tools.BashExec(ctx, "git diff", 60)
+	if err != nil || strings.TrimSpace(diff) == "" || diff == "(command produced no output)" {
+		return "no diff to review", true
+	}
+	judge := override
+	if judge == "" {
+		judge = crossFamilyJudgeFor(fixerModel)
+	}
+	sys := `You are a senior code reviewer gating an automated fix. The test suite ALREADY PASSES —
+your only job is what tests cannot see: changed I/O or streaming semantics, resource/connection leaks,
+lock or semaphore scope changes, dropped error paths, silent behavior changes beyond the stated fix's
+scope. Approve minimal, faithful fixes. Reply ONLY JSON: {"approve":true|false,"reason":"one sentence"}.`
+	user := fmt.Sprintf("The verified defect being fixed: %s (%s): %s\nSuggested fix was: %s\n\nThe applied diff:\n%s",
+		f.File, f.Symbol, f.Issue, f.Fix, truncate(diff, 12000))
+	resp, cerr := deps.Client.Chat(ctx, []llm.Message{
+		{Role: "system", Content: sys},
+		{Role: "user", Content: user},
+	}, llm.ChatOptions{Model: judge, MaxTokens: 300, JSONObject: true})
+	if cerr != nil {
+		return "review unavailable (" + cerr.Error() + ")", true
+	}
+	if bud != nil {
+		cost := resp.Usage.Cost
+		if cost == 0 {
+			cost = llm.CostUSD(judge, resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
+		}
+		bud.Charge(resp.Usage.TotalTokens, cost)
+	}
+	var v struct {
+		Approve bool   `json:"approve"`
+		Reason  string `json:"reason"`
+	}
+	body := strings.TrimSpace(resp.Message.Content)
+	if json.Unmarshal([]byte(body), &v) != nil {
+		return "review verdict unparseable", true // fail-open, like an unavailable judge
+	}
+	return v.Reason, v.Approve
+}
+
+// crossFamilyJudgeFor picks a judge model from a different family than the
+// fixer, so the reviewer never grades its own family's work (the same
+// invariant code_consensus enforces).
+func crossFamilyJudgeFor(fixerModel string) string {
+	fixerProvider := strings.SplitN(fixerModel, "/", 2)[0]
+	for _, fam := range orchestrator.Families() {
+		j := orchestrator.RoutesFor(fam)[orchestrator.RoleJudge].Model
+		if j != "" && strings.SplitN(j, "/", 2)[0] != fixerProvider {
+			return j
+		}
+	}
+	return llm.ModelFlagship
+}
+
+// changedGoDirs lists directories containing .go files changed in the last 24h
+// of commits (deduped, capped at 6 so the review focus stays reviewable).
+func changedGoDirs(ctx context.Context) []string {
+	out, err := tools.BashExec(ctx, "git log --since=24.hours --name-only --pretty=format:", 30)
+	if err != nil || out == "(command produced no output)" {
+		return nil
+	}
+	seen := map[string]bool{}
+	var dirs []string
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasSuffix(line, ".go") || strings.HasSuffix(line, "_test.go") {
+			continue
+		}
+		d := filepath.Dir(line)
+		if !seen[d] {
+			seen[d] = true
+			dirs = append(dirs, d)
+			if len(dirs) >= 6 {
+				break
+			}
+		}
+	}
+	return dirs
 }

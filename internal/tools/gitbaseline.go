@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/go-git/go-billy/v5/osfs"
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
+	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/storer"
 )
@@ -18,6 +20,64 @@ func openRepo(root string) (*git.Repository, error) {
 		root = "."
 	}
 	return git.PlainOpenWithOptions(root, &git.PlainOpenOptions{DetectDotGit: true})
+}
+
+// worktreeStatus returns the worktree and its status with .gitignore patterns respected —
+// bare wt.Status() counts ignored-but-present files (reports/, build outputs) as untracked,
+// which poisons every consumer from clean checks to the shadow-package gate.
+func worktreeStatus(repo *git.Repository) (*git.Worktree, git.Status, error) {
+	wt, err := repo.Worktree()
+	if err != nil {
+		return nil, nil, err
+	}
+	if ps, perr := gitignore.ReadPatterns(wt.Filesystem, nil); perr == nil {
+		wt.Excludes = append(wt.Excludes, ps...)
+	}
+	// Porcelain git honors more ignore sources than go-git loads by itself:
+	// core.excludesFile globals, the XDG default (~/.config/git/ignore) when
+	// that config is unset, and .git/info/exclude. Load them all (best-effort)
+	// or phantom dirt (editor state, local settings) keeps diverging from git.
+	if ps, perr := gitignore.LoadGlobalPatterns(osfs.New("/")); perr == nil {
+		wt.Excludes = append(wt.Excludes, ps...)
+	}
+	if ps, perr := gitignore.LoadSystemPatterns(osfs.New("/")); perr == nil {
+		wt.Excludes = append(wt.Excludes, ps...)
+	}
+	wt.Excludes = append(wt.Excludes, extraIgnorePatterns(wt.Filesystem.Root())...)
+	st, err := wt.Status()
+	return wt, st, err
+}
+
+// extraIgnorePatterns reads the ignore sources go-git's loaders miss:
+// .git/info/exclude and the XDG-default global ignore file used when
+// core.excludesFile is not configured.
+func extraIgnorePatterns(root string) []gitignore.Pattern {
+	var files []string
+	files = append(files, filepath.Join(root, ".git", "info", "exclude"))
+	xdg := os.Getenv("XDG_CONFIG_HOME")
+	if xdg == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			xdg = filepath.Join(home, ".config")
+		}
+	}
+	if xdg != "" {
+		files = append(files, filepath.Join(xdg, "git", "ignore"))
+	}
+	var out []gitignore.Pattern
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			out = append(out, gitignore.ParsePattern(line, nil))
+		}
+	}
+	return out
 }
 
 // Deprecated: superseded in production by RunWorktreeTestsOnBaselineCode (the D12
@@ -45,11 +105,7 @@ func RunOnBaseline(ctx context.Context, root, command string, timeoutSec int) (b
 	if err != nil {
 		return false, false
 	}
-	wt, err := repo.Worktree()
-	if err != nil {
-		return false, false
-	}
-	st, err := wt.Status()
+	wt, st, err := worktreeStatus(repo)
 	if err != nil {
 		return false, false
 	}
@@ -119,11 +175,7 @@ func RunWorktreeTestsOnBaselineCode(ctx context.Context, root, command string, t
 	if err != nil {
 		return false, false
 	}
-	wt, err := repo.Worktree()
-	if err != nil {
-		return false, false
-	}
-	st, err := wt.Status()
+	_, st, err := worktreeStatus(repo)
 	if err != nil {
 		return false, false
 	}
@@ -233,11 +285,7 @@ func GitStatus(root string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	wt, err := repo.Worktree()
-	if err != nil {
-		return "", err
-	}
-	st, err := wt.Status()
+	_, st, err := worktreeStatus(repo)
 	if err != nil {
 		return "", err
 	}
