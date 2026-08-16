@@ -550,3 +550,26 @@ func TestVerifyRetryEscalatesModel(t *testing.T) {
 		t.Errorf("retry must escalate to the next rung up %q, got %q", cands[1], forced[1])
 	}
 }
+
+// An exhausted budget suppresses the verify retry entirely: the worker runs
+// once, the failure is kept, and no second run is attempted.
+func TestRunWithVerifyNoRetryOnExhaustedBudget(t *testing.T) {
+	var calls int32
+	v := verifierFunc(func(_ context.Context, _ Task, _ Artifact) Verdict {
+		return Verdict{Pass: false, Feedback: "still broken"}
+	})
+	runner := func(_ context.Context, _ *Deps, tk Task, _ map[string]Artifact, _ *budget.Budget) (Artifact, error) {
+		atomic.AddInt32(&calls, 1)
+		return Artifact{TaskID: tk.ID, Content: "x"}, nil
+	}
+	bud := budget.New(0, 0, 0.000001, 0) // cost cap of 1 micro-dollar…
+	bud.Charge(10, 0.01)                 // …already blown before the task runs
+	d := testDeps(t, &fakeDoer{})
+	_, err := runWithVerify(context.Background(), d, Task{ID: "t", Goal: "x"}, nil, bud, runner, v, 2)
+	if err == nil {
+		t.Fatal("expected the verification failure to surface")
+	}
+	if n := atomic.LoadInt32(&calls); n != 1 {
+		t.Errorf("expected exactly 1 run (no retry on blown budget), got %d", n)
+	}
+}

@@ -294,6 +294,13 @@ func runWithVerify(ctx context.Context, d *Deps, t Task, inputs map[string]Artif
 	// retrying a judgment/tamper signal can wrongly pressure the agent to revert a
 	// legitimate change.
 	for attempt := 0; !verdict.Pass && !verdict.Flaky && !verdict.Advisory && attempt < retries; attempt++ {
+		// An exhausted budget makes a retry pure waste: the worker's step gate
+		// would return a partial immediately, and an LLM-backed verifier (critic)
+		// would still spend a call on top of a blown cap. Keep the failure.
+		if over, reason := bud.Exhausted(); over {
+			d.Emit.Emit(event.Event{Kind: "task", TaskID: t.ID, Text: "verify-failed and budget exhausted (" + reason + ") — no retry"})
+			break
+		}
 		// Teach the router about the failed attempt BEFORE the retry re-picks a
 		// model: the cost-ladder then escalates to the next rung mid-run instead
 		// of re-rolling the same inadequate (often free/cheapest) model.
