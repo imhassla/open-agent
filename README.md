@@ -29,7 +29,12 @@ you the whole thing in a built-in dashboard.
 ## Install
 
 ```sh
-# GitHub Release binaries (darwin_arm64, linux_amd64)
+# Homebrew (macOS arm64 / Linux amd64) — recommended
+brew install imhassla/tap/open-agent
+```
+
+```sh
+# or: GitHub Release binaries (darwin_arm64, linux_amd64)
 ARCH=darwin_arm64   # or: linux_amd64
 gh release download -R imhassla/open-agent -p "*${ARCH}*" -D /tmp/oa
 tar -xzf /tmp/oa/open-agent_*_${ARCH}.tar.gz -C /tmp/oa
