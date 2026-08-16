@@ -52,16 +52,16 @@ func TestStoreAddRemovePersist(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "schedule.json")
 	s, _ := Load(p)
 
-	if _, err := s.Add("fly", "x", "1h", 0.1, now); err == nil {
+	if _, err := s.Add("fly", "x", "1h", "", 0.1, now); err == nil {
 		t.Fatal("bad verb should be rejected")
 	}
-	if _, err := s.Add("do", "", "1h", 0.1, now); err == nil {
+	if _, err := s.Add("do", "", "1h", "", 0.1, now); err == nil {
 		t.Fatal("empty task should be rejected")
 	}
-	if _, err := s.Add("code", "fix the bug", "10s", 0.05, now); err == nil {
+	if _, err := s.Add("code", "fix the bug", "10s", "", 0.05, now); err == nil {
 		t.Fatal("sub-minute interval should be rejected")
 	}
-	j, err := s.Add("code", "fix the parser", "6h", 0.05, now)
+	j, err := s.Add("code", "fix the parser", "6h", "", 0.05, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,5 +103,63 @@ func TestDueJobsSelectsOnlyReady(t *testing.T) {
 	due[0].Runs = 42
 	if s.Jobs[0].Runs != 42 {
 		t.Fatal("DueJobs returned a copy, not a store pointer")
+	}
+}
+
+
+func TestChainedJobDueOnParentSuccess(t *testing.T) {
+	now := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	okTrue := true
+	s := &Store{}
+	parent, err := s.Add("research", "find the latest Go version", "6h", "", 0.02, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := s.Add("code", "update go.mod to the version above", "", parent.ID[:8], 0.05, now)
+	if err != nil {
+		t.Fatalf("add chained: %v", err)
+	}
+	if child.After != parent.ID {
+		t.Fatalf("child.After = %q, want %q", child.After, parent.ID)
+	}
+
+	// Parent never ran → child not due.
+	if len(s.DueJobs(now)) != 1 || s.DueJobs(now)[0].ID != parent.ID {
+		t.Fatalf("only the parent should be due initially: %v", s.DueJobs(now))
+	}
+	// Parent succeeded with an answer → child becomes due and reads the context.
+	s.Jobs[0].LastRun = now
+	s.Jobs[0].LastOK = &okTrue
+	s.Jobs[0].LastAnswer = "go1.26.6"
+	due := s.DueJobs(now.Add(time.Second))
+	if len(due) != 1 || due[0].ID != child.ID {
+		t.Fatalf("child should be due after parent success: %v", due)
+	}
+	if ctx := s.ChainContext(due[0]); ctx != "go1.26.6" {
+		t.Fatalf("chain context = %q, want the parent answer", ctx)
+	}
+	// After the child consumes it, it is not due again until the parent re-runs.
+	s.Jobs[1].LastRun = now.Add(time.Second)
+	if d := s.DueJobs(now.Add(2 * time.Second)); len(d) != 0 {
+		t.Fatalf("child should not re-fire on a stale parent result: %v", d)
+	}
+
+	// A parent FAILURE does not trigger the child.
+	failed := false
+	s.Jobs[0].LastRun = now.Add(time.Hour)
+	s.Jobs[0].LastOK = &failed
+	if d := s.DueJobs(now.Add(time.Hour + time.Second)); len(d) != 0 {
+		t.Fatalf("child must not chain from a failed parent: %v", d)
+	}
+
+	// Add validation: exactly one trigger.
+	if _, err := s.Add("code", "x", "1h", parent.ID, 0.05, now); err == nil {
+		t.Fatal("both --every and --after should be rejected")
+	}
+	if _, err := s.Add("code", "x", "", "", 0.05, now); err == nil {
+		t.Fatal("neither trigger should be rejected")
+	}
+	if _, err := s.Add("code", "x", "", "nonexistent", 0.05, now); err == nil {
+		t.Fatal("dangling parent should be rejected")
 	}
 }

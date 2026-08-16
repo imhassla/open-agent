@@ -495,6 +495,38 @@
         </section>
 
         <!-- Router Ladder Section -->
+        <!-- Scheduled jobs Section -->
+        <section class="section">
+            <h2>Scheduled jobs</h2>
+            <div id="schedule-loading" class="loading">
+                <div class="spinner"></div>
+                Loading schedule...
+            </div>
+            <div id="schedule-error" class="error-message hidden">
+                <div class="error-header">Error loading schedule</div>
+                <div id="schedule-error-text"></div>
+            </div>
+            <div id="schedule-container" class="hidden">
+                <div class="table-container">
+                    <table id="schedule-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Trigger</th>
+                                <th>State</th>
+                                <th>Runs</th>
+                                <th>Last outcome</th>
+                                <th>Task</th>
+                            </tr>
+                        </thead>
+                        <tbody id="schedule-tbody">
+                            <!-- Filled by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
         <section class="section">
             <h2>Router ladder</h2>
             <div id="ladder-loading" class="loading">
@@ -600,6 +632,7 @@
                 this.loadModels();
                 this.loadRatings();
                 this.loadLadder();
+                this.loadSchedule();
                 this.loadChart();
                 this.setupAutoRefresh();
             },
@@ -735,6 +768,43 @@
                 if (!telemetry) return;
 
                 this.renderChart(telemetry);
+            },
+
+            async loadSchedule() {
+                // Load scheduled jobs + their recent run logs (/api/schedule).
+                const data = await this.fetchAPI('/api/schedule', 'schedule');
+                if (!data) return;
+                this.renderSchedule(data);
+            },
+
+            renderSchedule(data) {
+                const tbody = document.getElementById('schedule-tbody');
+                const container = document.getElementById('schedule-container');
+                tbody.innerHTML = '';
+                const jobs = data.jobs || [];
+                if (jobs.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6">No scheduled jobs. Add one: <code>open-agent schedule add --every 6h code "…"</code></td></tr>';
+                    container.classList.remove('hidden');
+                    return;
+                }
+                for (const j of jobs) {
+                    const trigger = j.after ? ('after ' + j.after.slice(0, 16)) : ('every ' + j.every);
+                    const state = j.enabled ? 'enabled' : 'paused';
+                    let outcome = '—';
+                    if (j.last_ok === true) outcome = '<span style="color:#2e7d32">✓ ' + (j.last_note || 'ok') + '</span>';
+                    else if (j.last_ok === false) outcome = '<span style="color:#c62828">✗ ' + (j.last_note || 'failed') + '</span>';
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td class="id-cell">${j.id}</td>
+                        <td>${trigger}</td>
+                        <td>${state}</td>
+                        <td>${j.runs || 0}</td>
+                        <td title="${(j.last_note || '').replace(/"/g, '&quot;')}">${outcome}</td>
+                        <td class="goal-cell" title="${(j.task || '').replace(/"/g, '&quot;')}">${truncateText(j.task || '')}</td>
+                    `;
+                    tbody.appendChild(row);
+                }
+                container.classList.remove('hidden');
             },
             
             // Data rendering methods - render data to the UI
@@ -1206,6 +1276,7 @@
                 this.loadModels();
                 this.loadRatings();
                 this.loadLadder();
+                this.loadSchedule();
                 this.loadChart();
             }
         };

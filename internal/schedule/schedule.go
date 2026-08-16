@@ -18,17 +18,21 @@ import (
 // Every holds the interval spec (a Go duration like "30m"/"6h" or an alias:
 // hourly/daily/weekly). LastRun is the last fire time (zero = never fired).
 type Job struct {
-	ID       string    `json:"id"`
-	Verb     string    `json:"verb"`
-	Task     string    `json:"task"`
-	Every    string    `json:"every"`
-	MaxCost  float64   `json:"max_cost"`
-	Created  time.Time `json:"created"`
-	LastRun  time.Time `json:"last_run,omitempty"`
-	Runs     int       `json:"runs"`
-	Enabled  bool      `json:"enabled"`
-	LastOK   *bool     `json:"last_ok,omitempty"`
-	LastNote string    `json:"last_note,omitempty"`
+	ID      string    `json:"id"`
+	Verb    string    `json:"verb"`
+	Task    string    `json:"task"`
+	Every   string    `json:"every"`           // interval spec; empty for a chained job
+	After   string    `json:"after,omitempty"` // parent job id — fires on the parent's fresh success, not on an interval
+	MaxCost float64   `json:"max_cost"`
+	Created time.Time `json:"created"`
+	LastRun time.Time `json:"last_run,omitempty"`
+	Runs    int       `json:"runs"`
+	Enabled bool      `json:"enabled"`
+	// Outcome bookkeeping (also the chain hand-off: a child reads its parent's
+	// LastAnswer as upstream context).
+	LastOK     *bool  `json:"last_ok,omitempty"`
+	LastNote   string `json:"last_note,omitempty"`
+	LastAnswer string `json:"last_answer,omitempty"`
 }
 
 // ParseEvery converts an interval spec into a duration. Accepts Go durations
@@ -68,8 +72,13 @@ func (j Job) NextRun(now time.Time) time.Time {
 	return j.LastRun.Add(d)
 }
 
-// Due reports whether the job should fire at now (enabled and past its next run).
+// Due reports whether an INTERVAL job should fire at now. Chained jobs (After
+// set) are never due on their own — Store.DueJobs resolves them against their
+// parent, since a Job alone can't see the parent's state.
 func (j Job) Due(now time.Time) bool {
+	if j.After != "" {
+		return false
+	}
 	return j.Enabled && !now.Before(j.NextRun(now))
 }
 
@@ -122,8 +131,9 @@ func (s *Store) Save() error {
 }
 
 // Add validates and appends a job, returning it with a generated id. now is
-// passed in (not time.Now) so callers stay testable.
-func (s *Store) Add(verb, task, every string, maxCost float64, now time.Time) (*Job, error) {
+// passed in (not time.Now) so callers stay testable. Exactly one trigger is
+// required: an interval (every) OR a parent (afterPrefix, for a chained job).
+func (s *Store) Add(verb, task, every, afterPrefix string, maxCost float64, now time.Time) (*Job, error) {
 	verb = strings.TrimSpace(strings.ToLower(verb))
 	switch verb {
 	case "code", "ask", "do", "research":
@@ -133,20 +143,61 @@ func (s *Store) Add(verb, task, every string, maxCost float64, now time.Time) (*
 	if strings.TrimSpace(task) == "" {
 		return nil, fmt.Errorf("task must not be empty")
 	}
-	if _, err := ParseEvery(every); err != nil {
+	every = strings.ToLower(strings.TrimSpace(every))
+	afterPrefix = strings.TrimSpace(afterPrefix)
+	if (every == "") == (afterPrefix == "") {
+		return nil, fmt.Errorf("give exactly one of --every (interval) or --after (parent job)")
+	}
+	after := ""
+	if afterPrefix != "" {
+		parent := s.find(afterPrefix)
+		if parent == nil {
+			return nil, fmt.Errorf("no parent job matching %q for --after", afterPrefix)
+		}
+		after = parent.ID
+	} else if _, err := ParseEvery(every); err != nil {
 		return nil, err
 	}
 	j := Job{
 		ID:      genID(verb, task, now),
 		Verb:    verb,
 		Task:    task,
-		Every:   strings.ToLower(strings.TrimSpace(every)),
+		Every:   every,
+		After:   after,
 		MaxCost: maxCost,
 		Created: now,
 		Enabled: true,
 	}
 	s.Jobs = append(s.Jobs, j)
 	return &j, nil
+}
+
+// find returns the single job whose id has the given prefix (nil on none/many).
+func (s *Store) find(idPrefix string) *Job {
+	var hit *Job
+	for i := range s.Jobs {
+		if strings.HasPrefix(s.Jobs[i].ID, idPrefix) {
+			if hit != nil {
+				return nil
+			}
+			hit = &s.Jobs[i]
+		}
+	}
+	return hit
+}
+
+// Parent returns the job a chained job depends on (nil for interval jobs or a
+// dangling parent id).
+func (s *Store) Parent(j *Job) *Job {
+	if j.After == "" {
+		return nil
+	}
+	for i := range s.Jobs {
+		if s.Jobs[i].ID == j.After {
+			return &s.Jobs[i]
+		}
+	}
+	return nil
 }
 
 // Remove deletes the job whose id has prefix idPrefix (unambiguously). Returns
@@ -170,15 +221,43 @@ func (s *Store) Remove(idPrefix string) (string, error) {
 }
 
 // DueJobs returns the enabled jobs due at now, each as a pointer into s.Jobs so
-// the caller can record the outcome and Save.
+// the caller can record the outcome and Save. Interval jobs use their own Due;
+// a chained job is due when its parent has SUCCEEDED more recently than the
+// child last ran (fresh upstream output to consume) — so a chain advances one
+// hop per tick and never re-fires on a stale parent result.
 func (s *Store) DueJobs(now time.Time) []*Job {
 	var out []*Job
 	for i := range s.Jobs {
-		if s.Jobs[i].Due(now) {
-			out = append(out, &s.Jobs[i])
+		j := &s.Jobs[i]
+		if !j.Enabled {
+			continue
+		}
+		if j.After == "" {
+			if j.Due(now) {
+				out = append(out, j)
+			}
+			continue
+		}
+		parent := s.Parent(j)
+		if parent == nil || parent.LastRun.IsZero() || parent.LastOK == nil || !*parent.LastOK {
+			continue // parent never succeeded → nothing to chain from
+		}
+		if parent.LastRun.After(j.LastRun) {
+			out = append(out, j)
 		}
 	}
 	return out
+}
+
+// ChainContext returns the upstream context a chained job should prepend to its
+// task at fire time (empty for interval jobs or a parent with no captured
+// answer).
+func (s *Store) ChainContext(j *Job) string {
+	parent := s.Parent(j)
+	if parent == nil || strings.TrimSpace(parent.LastAnswer) == "" {
+		return ""
+	}
+	return parent.LastAnswer
 }
 
 // genID makes a short stable-ish id from the verb, a task slug, and the minute
@@ -207,13 +286,17 @@ func (s *Store) Summary() string {
 	copy(jobs, s.Jobs)
 	sort.Slice(jobs, func(i, j int) bool { return jobs[i].Created.After(jobs[j].Created) })
 	var b strings.Builder
-	fmt.Fprintf(&b, "%-32s %-8s %-8s %5s  %s\n", "ID", "EVERY", "STATE", "RUNS", "TASK")
+	fmt.Fprintf(&b, "%-32s %-12s %-8s %5s  %s\n", "ID", "TRIGGER", "STATE", "RUNS", "TASK")
 	for _, j := range jobs {
 		state := "enabled"
 		if !j.Enabled {
 			state = "paused"
 		}
-		fmt.Fprintf(&b, "%-32s %-8s %-8s %5d  %s\n", j.ID, j.Every, state, j.Runs, truncate(j.Task, 50))
+		trigger := "every " + j.Every
+		if j.After != "" {
+			trigger = "after " + truncate(j.After, 12)
+		}
+		fmt.Fprintf(&b, "%-32s %-12s %-8s %5d  %s\n", j.ID, trigger, state, j.Runs, truncate(j.Task, 50))
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

@@ -49,6 +49,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/ratings", s.handleRatings)
 	// Route for getting ladder
 	mux.HandleFunc("GET /api/ladder", s.handleLadder)
+	// Route for scheduled jobs + their recent outcomes
+	mux.HandleFunc("GET /api/schedule", s.handleSchedule)
 	// Route for serving the UI
 	mux.HandleFunc("GET /", s.handleIndex)
 
@@ -186,6 +188,65 @@ func scanEventsCostTokens(path string) (float64, int) {
 		}
 	}
 	return cost, tokens
+}
+
+// handleSchedule implements GET /api/schedule: the persisted jobs (verbatim
+// schedule.json) plus, per job, the last few run-log lines so the dashboard can
+// show recent outcomes without a second round-trip. Read-only, like every dash
+// endpoint — it never mutates the store.
+func (s *Server) handleSchedule(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var jobs json.RawMessage
+	if data, err := os.ReadFile(filepath.Join(s.DataDir, "schedule.json")); err == nil {
+		jobs = data
+	} else {
+		jobs = json.RawMessage("[]")
+	}
+	// Attach the last up-to-5 log lines per job id (best-effort).
+	logs := map[string][]json.RawMessage{}
+	logDir := filepath.Join(s.DataDir, "schedule-logs")
+	if entries, err := os.ReadDir(logDir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+				continue
+			}
+			id := strings.TrimSuffix(e.Name(), ".jsonl")
+			logs[id] = tailJSONL(filepath.Join(logDir, e.Name()), 5)
+		}
+	}
+	resp := struct {
+		Jobs json.RawMessage              `json:"jobs"`
+		Logs map[string][]json.RawMessage `json:"logs"`
+	}{Jobs: jobs, Logs: logs}
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+// tailJSONL returns the last n valid JSON lines of a file (best-effort, newest last).
+func tailJSONL(path string, n int) []json.RawMessage {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	var all []json.RawMessage
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		var obj json.RawMessage
+		if json.Unmarshal([]byte(line), &obj) == nil {
+			all = append(all, obj)
+		}
+	}
+	if len(all) > n {
+		all = all[len(all)-n:]
+	}
+	return all
 }
 
 // handleRun implements GET /api/run.

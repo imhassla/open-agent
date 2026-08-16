@@ -256,7 +256,10 @@ func runOneShot(deps *orchestrator.Deps, role orchestrator.Role, task string, op
 	defer func() { deps.Emit = prevEmit }()
 	ag, err := orchestrator.BuildWorker(role, deps, orchestrator.Options{
 		ModelOverride: opts.model, MaxSteps: opts.maxSteps, Verbose: opts.verbose,
-		Streaming: !opts.noStream, Budget: oneShotBudget(opts),
+		// Stream to stdout (not the default stderr) so the live output IS the
+		// answer on stdout; the reprint below is then guarded on AnswerStreamed
+		// to avoid the double-print a stderr stream + stdout reprint produced.
+		Streaming: !opts.noStream, StreamOut: os.Stdout, Budget: oneShotBudget(opts),
 		Class: orchestrator.ClassifyGoal(role, task), // pick from the same fine bucket the outcome records into
 		// One-shot code runs are scripted (often --json): a worker that only
 		// DESCRIBES a change must be nudged to apply it, exactly like DAG code
@@ -310,7 +313,9 @@ func runOneShot(deps *orchestrator.Deps, role orchestrator.Role, task string, op
 		fmt.Fprintln(os.Stderr, "error:", runErr)
 		os.Exit(1)
 	}
-	fmt.Println(res.Answer)
+	if !res.AnswerStreamed {
+		fmt.Println(res.Answer) // already live-streamed to stdout when streaming is on
+	}
 	if role == orchestrator.RoleResearch {
 		if p, e := tools.SaveReport("reports", task, res.Answer, time.Now()); e == nil {
 			fmt.Fprintln(os.Stderr, "report saved:", p)
@@ -401,6 +406,7 @@ type options struct {
 	reviewModel  string // improve: cross-family diff-review judge override
 	changed      bool   // improve: focus = packages changed in the last 24h
 	every        string // schedule: recurring interval (30m, 6h, daily)
+	after        string // schedule: parent job id (chained job)
 	family       string
 	families     string
 	mcp          string
@@ -453,6 +459,8 @@ func parseArgs(args []string) (options, []string, error) {
 			o.changed = true
 		case "--every":
 			o.every, err = next(&i, args[i])
+		case "--after":
+			o.after, err = next(&i, args[i])
 		case "-f", "--family":
 			o.family, err = next(&i, args[i])
 		case "--families":

@@ -173,8 +173,11 @@ Recurring jobs: `open-agent schedule add --every 6h code "run go test ./... and 
 failure"` registers a job; `open-agent schedule run` is a foreground daemon that fires due
 jobs as subprocesses (crash-isolated), logging each envelope to
 `~/.open-agent/schedule-logs/<id>.jsonl`. Intervals are Go durations (30m, 6h) or
-hourly/daily/weekly; a never-run job fires on the first tick. `schedule list/pause/resume/
-remove` manage jobs (edits are picked up live by a running daemon). For OS-level
+hourly/daily/weekly; a never-run job fires on the first tick. CHAINS: `schedule add --after
+<parent-id> <verb> "task"` makes a job fire on its parent's fresh SUCCESS (not an interval)
+with the parent's output prepended as context — e.g. a research job feeding a code job.
+`schedule list/pause/resume/remove` manage jobs (edits are picked up live by a running
+daemon). The dashboard has a Scheduled-jobs section (jobs + last outcome). For OS-level
 scheduling instead of the daemon, a plain cron entry calling the verb directly also works.
 
 Nightly self-improvement: `open-agent improve --changed --max-cost 0.30` reviews the
