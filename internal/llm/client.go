@@ -307,6 +307,9 @@ func (c *Client) doChat(ctx context.Context, body []byte, model string) (*Respon
 	if len(cr.Choices) == 0 {
 		return nil, true, fmt.Errorf("%s: response had no choices", model)
 	}
+	if cr.Model == "" {
+		cr.Model = model // fall back to the requested slug (streaming path does the same)
+	}
 	return &Response{
 		Message:      cr.Choices[0].Message,
 		FinishReason: cr.Choices[0].FinishReason,

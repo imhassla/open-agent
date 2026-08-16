@@ -184,11 +184,14 @@ func (a *Agent) Send(ctx context.Context, userInput string) (*Result, error) {
 
 		// Clamp the completion cap to the remaining token budget so one in-flight
 		// generation can't massively overshoot --max-tokens (the between-step gate
-		// above only catches it after the fact). Floor of 1: headroom 0 means the
-		// budget is within one completion of its cap — the post-charge gate stops it.
+		// above only catches it after the fact). Even at 0 headroom the floor
+		// applies — the post-charge gate stops the run right after.
 		callOpts := opts
 		if hr, bounded := bud.TokenHeadroom(); bounded && hr < int64(callOpts.MaxTokens) {
-			callOpts.MaxTokens = int(max(hr, 1))
+			// Floor of 16, not 1: several providers reject max_tokens below a small
+			// minimum with a 400 that pattern-matches context-length markers —
+			// which would trigger a pointless compaction cycle.
+			callOpts.MaxTokens = int(max(hr, 16))
 		}
 		// Same idea for --max-cost: convert the remaining USD headroom into a
 		// completion-token allowance at this model's output price, so a verbose
@@ -198,7 +201,7 @@ func (a *Agent) Send(ctx context.Context, userInput string) (*Result, error) {
 		if usd, bounded := bud.CostHeadroom(); bounded {
 			if price := llm.OutputPricePerToken(a.Model); price > 0 {
 				if allow := int64(usd / price); allow < int64(callOpts.MaxTokens) {
-					callOpts.MaxTokens = int(max(allow, 1))
+					callOpts.MaxTokens = int(max(allow, 16)) // same floor rationale as above
 				}
 			}
 		}
@@ -507,7 +510,15 @@ func (a *Agent) noteRepeat(name, rawArgs, res string) string {
 	if rec.repeats == 1 {
 		return res + "\n[note: this exact call already returned this identical result — do not repeat it; act on the result you already have]"
 	}
-	return fmt.Sprintf("[identical result #%d suppressed — this exact call has returned the same output every time since step %d; NOTHING has changed. Stop repeating it and take a different action toward the goal.]",
+	// Suppression must PRESERVE the ERROR: prefix — downstream, that prefix is
+	// what routes a result into ToolErrors and, critically, what keeps a
+	// repeatedly-FAILING mutating call from being miscounted by the apply guard
+	// as a successful edit.
+	prefix := ""
+	if strings.HasPrefix(res, "ERROR:") {
+		prefix = "ERROR: "
+	}
+	return prefix + fmt.Sprintf("[identical result #%d suppressed — this exact call has returned the same output every time since step %d; NOTHING has changed. Stop repeating it and take a different action toward the goal.]",
 		rec.repeats+1, prev.originStep)
 }
 

@@ -322,6 +322,12 @@ func TestWriteFileShadowPackageGuard(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "already lives in") {
 		t.Fatalf("expected shadow-package error, got %v", err)
 	}
+	// The redirect names the exact corrected path and never cites an existing
+	// file as an example — a worker once read "e.g. base.go" as the target and
+	// OVERWROTE it.
+	if !strings.Contains(err.Error(), filepath.Join(dir, "clamp.go")) || strings.Contains(err.Error(), "base.go") {
+		t.Fatalf("redirect message wrong: %v", err)
+	}
 	if _, statErr := os.Stat(filepath.Join(dir, "bench")); !os.IsNotExist(statErr) {
 		t.Fatalf("guard still created the directory")
 	}

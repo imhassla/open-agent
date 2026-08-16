@@ -57,8 +57,13 @@ func checkShadowPackage(path, content string) error {
 				continue
 			}
 			if goPackageClause(string(src)) == pkg {
-				return fmt.Errorf("package %q already lives in %s (e.g. %s) — write your file THERE, next to the existing files, instead of creating the new directory %s; a same-named subpackage would compile separately and leave the real package unchanged",
-					pkg, up, filepath.Base(f), dir)
+				// The redirect names the EXACT corrected path for the new file.
+				// Never cite an existing file as an example: a worker read
+				// "e.g. base.go" as the target and OVERWROTE it (field defect —
+				// base.go and its Identity function were destroyed).
+				suggested := filepath.Join(up, filepath.Base(path))
+				return fmt.Errorf("package %q already lives in %s — write your NEW file as %s instead (do NOT overwrite any existing file, and do not create the directory %s: a same-named subpackage would compile separately and leave the real package unchanged)",
+					pkg, up, suggested, dir)
 			}
 		}
 	}

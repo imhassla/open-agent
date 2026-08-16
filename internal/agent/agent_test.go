@@ -517,6 +517,15 @@ func TestNoteRepeat(t *testing.T) {
 	if got := a.noteRepeat("glob", `{"pattern":"*.go"}`, "a.go"); !strings.Contains(got, "suppressed") || strings.Contains(got, "a.go") {
 		t.Fatalf("second repeat not suppressed: %q", got)
 	}
+	// A suppressed repeated ERROR keeps its ERROR: prefix — the apply guard and
+	// ToolErrors routing key off it (a repeatedly-failing edit_file must never
+	// be miscounted as a successful apply).
+	e := &Agent{}
+	e.noteRepeat("edit_file", `{"path":"x"}`, "ERROR: old_string not found in x")
+	e.noteRepeat("edit_file", `{"path":"x"}`, "ERROR: old_string not found in x")
+	if got := e.noteRepeat("edit_file", `{"path":"x"}`, "ERROR: old_string not found in x"); !strings.HasPrefix(got, "ERROR:") || !strings.Contains(got, "suppressed") {
+		t.Fatalf("suppressed error lost its ERROR prefix: %q", got)
+	}
 	// Verify originStep: simulate steps and check the message references the FIRST occurrence's step
 	a.StepsTaken = 10
 	if got := a.noteRepeat("glob", `{"pattern":"*.go"}`, "a.go"); !strings.Contains(got, "since step 0") {

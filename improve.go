@@ -130,9 +130,9 @@ func runImprove(deps *orchestrator.Deps, opts options, focus string) {
 		}
 		if _, err := ag.Run(ctx, task); err != nil {
 			res.Detail = "worker: " + err.Error()
-			results = append(results, res)
 			gitRevertAll()
-			res.Reverted = true
+			res.Reverted = true // set BEFORE append — improveResult is a value type
+			results = append(results, res)
 			continue
 		}
 		// Gate 1: the whole suite must stay green after each fix.
