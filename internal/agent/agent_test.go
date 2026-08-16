@@ -620,3 +620,32 @@ func TestCompactPreservesPreamble(t *testing.T) {
 		}
 	}
 }
+
+// An interrupted turn (ctx canceled mid-flight) must return a SALVAGED PARTIAL
+// (Stopped, no error) — not (nil, error) — so the session can fold it into the
+// transcript and a follow-up "continue" has context. Regression for the
+// do-nothing-stub-after-interruption bug.
+func TestSendCancelReturnsPartial(t *testing.T) {
+	// First call streams some text, then the context is canceled before the next.
+	ctx, cancel := context.WithCancel(context.Background())
+	a := &Agent{
+		Streaming: true,
+		Client: &scriptDoer{fn: func(call int) (*llm.Response, error) {
+			if call == 0 {
+				// A tool-call step so the loop continues to a second call.
+				return toolCallResp("looking into the finding"), nil
+			}
+			cancel()
+			return nil, context.Canceled
+		}},
+		Registry: CoreTools(),
+		MaxSteps: 5,
+	}
+	res, err := a.Send(ctx, "investigate the finding")
+	if err != nil {
+		t.Fatalf("interrupted Send must not error, got %v", err)
+	}
+	if res == nil || !res.Stopped || res.StopReason != "interrupted" {
+		t.Fatalf("expected a partial with StopReason=interrupted, got %+v", res)
+	}
+}

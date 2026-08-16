@@ -196,6 +196,10 @@ func (s *session) converse(ctx context.Context, role orchestrator.Role, line str
 		fmt.Fprintln(os.Stderr, "\nerror:", rerr)
 		s.tokens += w.TotalTokens
 		s.cost += w.TotalCost
+		// Record the interrupted/failed turn in the transcript so a follow-up
+		// ("continue…") has context. Without this the turn vanished and the next
+		// message hit a worker with no memory of it — producing a do-nothing stub.
+		s.foldHistory(line, fmt.Sprintf("(this turn did not complete: %s — its work above may be partial)", truncate(rerr.Error(), 120)))
 		s.deps.Tlog.Record(telemetry.Record{Kind: string(role), Task: truncate(line, 200), Model: w.Model, OK: false, Err: rerr.Error(), ToolErrors: w.ToolErrors})
 		return
 	}
@@ -207,7 +211,18 @@ func (s *session) converse(ctx context.Context, role orchestrator.Role, line str
 			fmt.Fprintln(os.Stderr, "report saved:", p)
 		}
 	}
-	s.foldHistory(line, res.Answer)
+	// An interrupted/partial turn (Ctrl-C, budget, length) is folded with a
+	// marker so the next turn knows it was cut short and can resume deliberately.
+	answer := res.Answer
+	if res.Stopped {
+		reason := res.StopReason
+		if reason == "" {
+			reason = "stopped"
+		}
+		fmt.Fprintf(os.Stderr, "(turn %s — partial; type a follow-up to continue)\n", reason)
+		answer += fmt.Sprintf("\n\n(note: this turn was cut short: %s — continue from here)", reason)
+	}
+	s.foldHistory(line, answer)
 	s.tokens += w.TotalTokens
 	s.cost += w.TotalCost
 	s.deps.Tlog.Record(telemetry.Record{

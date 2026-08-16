@@ -232,6 +232,13 @@ func (a *Agent) Send(ctx context.Context, userInput string) (*Result, error) {
 				a.poisonNudges++
 				a.msgs = append(a.msgs, llm.Message{Role: "user", Content: "(your previous tool call was rejected by the provider as invalid or too large, and has been removed — retry with SMALL incremental edits: create or modify large files in parts, at most ~150 lines per tool call)"})
 				continue
+			case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
+				// The turn was INTERRUPTED (Ctrl-C) or timed out mid-flight.
+				// Salvage the best partial instead of discarding the whole turn —
+				// otherwise the interrupted work never enters the transcript and the
+				// next "continue" turn has no context to act on (it just emits a
+				// do-nothing acknowledgment).
+				return a.partial("interrupted", step), nil
 			default:
 				return nil, fmt.Errorf("step %d: %w", step, err)
 			}
