@@ -91,7 +91,7 @@ func TestDueJobsSelectsOnlyReady(t *testing.T) {
 	now := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
 	s := &Store{}
 	s.Jobs = []Job{
-		{ID: "a", Every: "1h", Created: now, Enabled: true, LastRun: now.Add(-2 * time.Hour)}, // due
+		{ID: "a", Every: "1h", Created: now, Enabled: true, LastRun: now.Add(-2 * time.Hour)},    // due
 		{ID: "b", Every: "1h", Created: now, Enabled: true, LastRun: now.Add(-10 * time.Minute)}, // not due
 		{ID: "c", Every: "1h", Created: now, Enabled: false, LastRun: now.Add(-5 * time.Hour)},   // paused
 	}
@@ -105,7 +105,6 @@ func TestDueJobsSelectsOnlyReady(t *testing.T) {
 		t.Fatal("DueJobs returned a copy, not a store pointer")
 	}
 }
-
 
 func TestChainedJobDueOnParentSuccess(t *testing.T) {
 	now := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
@@ -162,4 +161,88 @@ func TestChainedJobDueOnParentSuccess(t *testing.T) {
 	if _, err := s.Add("code", "x", "", "nonexistent", 0.05, now); err == nil {
 		t.Fatal("dangling parent should be rejected")
 	}
+}
+
+// Transitive chains A→B→C advance one hop per evaluation: B fires after A
+// succeeds, C only after B then succeeds. This confirms the chain model
+// composes without special-casing depth.
+func TestTransitiveChain(t *testing.T) {
+	now := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	okTrue := true
+	s := &Store{}
+	a, _ := s.Add("research", "A: find X", "6h", "", 0.02, now)
+	b, _ := s.Add("ask", "B: refine X", "", a.ID[:8], 0.02, now)
+	c, _ := s.Add("code", "C: apply X", "", b.ID[:8], 0.05, now)
+
+	// Only A is due initially.
+	if due := s.DueJobs(now); len(due) != 1 || due[0].ID != a.ID {
+		t.Fatalf("initial: want only A, got %v", ids(due))
+	}
+	// A succeeds → B due, C not (B hasn't run).
+	setRun(s, a.ID, now, &okTrue, "x-from-A")
+	if due := s.DueJobs(now.Add(time.Second)); len(due) != 1 || due[0].ID != b.ID {
+		t.Fatalf("after A: want only B, got %v", ids(due))
+	}
+	// B succeeds → C due.
+	setRun(s, b.ID, now.Add(time.Second), &okTrue, "x-from-B")
+	if due := s.DueJobs(now.Add(2 * time.Second)); len(due) != 1 || due[0].ID != c.ID {
+		t.Fatalf("after B: want only C, got %v", ids(due))
+	}
+	// C consumes B's output.
+	if ctx := s.ChainContext(s.find(c.ID)); ctx != "x-from-B" {
+		t.Fatalf("C chain context = %q, want B's output", ctx)
+	}
+}
+
+func setRun(s *Store, id string, when time.Time, ok *bool, answer string) {
+	for i := range s.Jobs {
+		if s.Jobs[i].ID == id {
+			s.Jobs[i].LastRun = when
+			s.Jobs[i].LastOK = ok
+			s.Jobs[i].LastAnswer = answer
+			s.Jobs[i].Runs++
+		}
+	}
+}
+
+func ids(js []*Job) []string {
+	out := make([]string, len(js))
+	for i, j := range js {
+		out[i] = j.ID
+	}
+	return out
+}
+
+func TestPreview(t *testing.T) {
+	now := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	okTrue := true
+	s := &Store{}
+	iv, _ := s.Add("ask", "hourly check", "1h", "", 0.02, now)
+	s.Add("code", "chained", "", iv.ID[:8], 0.05, now)
+	// interval job that already ran → shows a future time
+	setRun(s, iv.ID, now, &okTrue, "")
+
+	out := s.Preview(now.Add(10 * time.Minute))
+	if !contains(out, "in 50m") {
+		t.Fatalf("interval next-fire not shown:\n%s", out)
+	}
+	if !contains(out, "when parent") {
+		t.Fatalf("chained dependency not shown:\n%s", out)
+	}
+	// A due interval job reads "now (due)".
+	s2 := &Store{}
+	s2.Add("ask", "fresh", "1h", "", 0.02, now) // never run → due now
+	if !contains(s2.Preview(now), "now (due)") {
+		t.Fatalf("due job not marked:\n%s", s2.Preview(now))
+	}
+}
+
+func contains(s, sub string) bool { return len(s) >= len(sub) && (indexOf(s, sub) >= 0) }
+func indexOf(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
 }

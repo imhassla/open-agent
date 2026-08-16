@@ -277,6 +277,56 @@ func genID(verb, task string, now time.Time) string {
 	return fmt.Sprintf("%s-%s-%s", verb, strings.Trim(slug.String(), "-"), now.Format("0102-1504"))
 }
 
+// Preview renders, per job, when it will next fire relative to now — a schedule
+// dry-run. Interval jobs show their computed next time; chained jobs show which
+// parent they wait on (a schedule can't predict a data-dependent parent success,
+// so it reports the dependency rather than a fabricated time).
+func (s *Store) Preview(now time.Time) string {
+	if len(s.Jobs) == 0 {
+		return "(no scheduled jobs)"
+	}
+	jobs := make([]Job, len(s.Jobs))
+	copy(jobs, s.Jobs)
+	sort.Slice(jobs, func(i, j int) bool { return jobs[i].Created.After(jobs[j].Created) })
+	var b strings.Builder
+	fmt.Fprintf(&b, "%-32s %-8s  %s\n", "ID", "STATE", "NEXT FIRE")
+	for _, j := range jobs {
+		state := "enabled"
+		if !j.Enabled {
+			state = "paused"
+		}
+		var next string
+		switch {
+		case !j.Enabled:
+			next = "— (paused)"
+		case j.After != "":
+			next = "when parent " + truncate(j.After, 16) + " next succeeds"
+		default:
+			nr := j.NextRun(now)
+			if !now.Before(nr) {
+				next = "now (due)"
+			} else {
+				next = fmt.Sprintf("in %s (%s)", now2dur(now, nr), nr.Format("2006-01-02 15:04"))
+			}
+		}
+		fmt.Fprintf(&b, "%-32s %-8s  %s\n", j.ID, state, next)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// now2dur renders a compact "in X" duration, rounded to a readable unit.
+func now2dur(now, then time.Time) string {
+	d := then.Sub(now)
+	if d >= 24*time.Hour {
+		h := int(d.Hours())
+		return fmt.Sprintf("%dd%dh", h/24, h%24)
+	}
+	if d >= time.Hour {
+		return d.Round(time.Minute).String()
+	}
+	return d.Round(time.Second).String()
+}
+
 // Summary renders the job list as aligned text (newest first).
 func (s *Store) Summary() string {
 	if len(s.Jobs) == 0 {

@@ -36,6 +36,8 @@ func runSchedule(args []string, opts options) {
 		scheduleAdd(store, args, opts)
 	case "list", "":
 		fmt.Println(store.Summary())
+	case "next", "dry-run":
+		fmt.Println(store.Preview(time.Now()))
 	case "remove", "rm":
 		if len(args) == 0 {
 			fmt.Fprintln(os.Stderr, "usage: open-agent schedule remove <id-prefix>")
@@ -57,7 +59,7 @@ func runSchedule(args []string, opts options) {
 	case "run":
 		runScheduleDaemon(store, opts)
 	default:
-		fmt.Fprintln(os.Stderr, "schedule subcommands: add, list, remove, pause, resume, run")
+		fmt.Fprintln(os.Stderr, "schedule subcommands: add, list, next, remove, pause, resume, run")
 		os.Exit(2)
 	}
 }

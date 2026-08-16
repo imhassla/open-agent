@@ -176,8 +176,10 @@ jobs as subprocesses (crash-isolated), logging each envelope to
 hourly/daily/weekly; a never-run job fires on the first tick. CHAINS: `schedule add --after
 <parent-id> <verb> "task"` makes a job fire on its parent's fresh SUCCESS (not an interval)
 with the parent's output prepended as context — e.g. a research job feeding a code job.
-`schedule list/pause/resume/remove` manage jobs (edits are picked up live by a running
-daemon). The dashboard has a Scheduled-jobs section (jobs + last outcome). For OS-level
+`schedule list/next/pause/resume/remove` manage jobs — `next` (alias dry-run) previews when
+each job will next fire — and edits are picked up live by a running daemon. Chains are
+transitive (A→B→C: each hop fires on its parent's fresh success). The dashboard has a
+Scheduled-jobs section (jobs + last outcome; click a job for its recent run-log timeline). For OS-level
 scheduling instead of the daemon, a plain cron entry calling the verb directly also works.
 
 Nightly self-improvement: `open-agent improve --changed --max-cost 0.30` reviews the

@@ -787,12 +787,14 @@
                     container.classList.remove('hidden');
                     return;
                 }
+                const logs = data.logs || {};
                 for (const j of jobs) {
                     const trigger = j.after ? ('after ' + j.after.slice(0, 16)) : ('every ' + j.every);
                     const state = j.enabled ? 'enabled' : 'paused';
                     let outcome = '—';
-                    if (j.last_ok === true) outcome = '<span style="color:#2e7d32">✓ ' + (j.last_note || 'ok') + '</span>';
-                    else if (j.last_ok === false) outcome = '<span style="color:#c62828">✗ ' + (j.last_note || 'failed') + '</span>';
+                    if (j.last_ok === true) outcome = '<span style="color:#56d364">✓ ' + (j.last_note || 'ok') + '</span>';
+                    else if (j.last_ok === false) outcome = '<span style="color:#ff7b72">✗ ' + (j.last_note || 'failed') + '</span>';
+                    const jobLogs = logs[j.id] || [];
                     const row = document.createElement('tr');
                     row.innerHTML = `
                         <td class="id-cell">${j.id}</td>
@@ -803,6 +805,24 @@
                         <td class="goal-cell" title="${(j.task || '').replace(/"/g, '&quot;')}">${truncateText(j.task || '')}</td>
                     `;
                     tbody.appendChild(row);
+
+                    // A detail row (hidden until the job row is clicked) with the
+                    // job's recent run-log lines — the schedule's own timeline.
+                    const detail = document.createElement('tr');
+                    detail.classList.add('hidden');
+                    const cell = document.createElement('td');
+                    cell.colSpan = 6;
+                    if (jobLogs.length === 0) {
+                        cell.innerHTML = '<div class="timeline-item">no runs logged yet</div>';
+                    } else {
+                        cell.innerHTML = '<div class="timeline">' + jobLogs.slice().reverse().map(l => {
+                            const cls = l.ok ? 'timeline-text' : 'timeline-text-error';
+                            return `<div class="timeline-item"><span class="timeline-other">${l.ts || ''}</span> <span class="${cls}">${(l.note || '').replace(/</g,'&lt;')}</span></div>`;
+                        }).join('') + '</div>';
+                    }
+                    detail.appendChild(cell);
+                    tbody.appendChild(detail);
+                    row.addEventListener('click', () => detail.classList.toggle('hidden'));
                 }
                 container.classList.remove('hidden');
             },
