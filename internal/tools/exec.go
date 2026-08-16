@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -115,6 +116,27 @@ func execCapture(ctx context.Context, timeoutSec int, dir, name string, args ...
 
 	cmd := exec.CommandContext(cctx, name, args...)
 	cmd.Dir = dir // empty => inherit the process working directory
+
+	// Run the command in its own process group so a timeout can kill the whole
+	// tree — background jobs (`&`), pipelines and subshells it spawns — not just
+	// the top-level bash. Without this, a leaked child keeps the output pipe open
+	// and CombinedOutput blocks long past the deadline (the command "hangs" well
+	// after timeout_sec; e.g. a ping/nmap sweep that backgrounds its probes).
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return os.ErrProcessDone
+		}
+		// Negative PID signals the whole process group led by the child.
+		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil && err != syscall.ESRCH {
+			return err
+		}
+		return os.ErrProcessDone
+	}
+	// Backstop: if a grandchild still holds the pipe after the group kill, don't
+	// wait on it forever — abandon the I/O copy shortly after cancellation.
+	cmd.WaitDelay = 2 * time.Second
+
 	out, err := cmd.CombinedOutput()
 	res := capOutput(strings.TrimSpace(string(out)))
 
