@@ -51,6 +51,7 @@ type Agent struct {
 	applyNudges  int           // RequireApply: nudges issued this Send (bounded by maxApplyNudges)
 	repeatMu     sync.Mutex
 	repeats      map[string]repeatRec // (tool+args) → last result fingerprint (loop-wander guard)
+	streamMu     sync.Mutex           // serializes live tool-output writes (concurrent dispatch)
 	emptyNudges  int                  // empty-answer re-prompts issued this Send (bounded to 1)
 	poisonNudges int                  // poisoned-tool-call recoveries this Send (bounded to 1)
 	editsApplied int                  // successful mutating tool calls this Send (envelope observability)
@@ -424,6 +425,14 @@ func toolArgs(tc llm.ToolCall) map[string]any {
 	return m
 }
 
+// toolStreamWriter returns a writer that renders a tool's live output to the
+// agent's stream target, each line dim-prefixed so it reads as tool progress
+// (not the model's answer), and mutex-guarded so concurrent tool calls in one
+// step keep their lines intact.
+func (a *Agent) toolStreamWriter(tool string) io.Writer {
+	return &prefixWriter{w: a.streamOut(), mu: &a.streamMu, prefix: "  │ "}
+}
+
 func (a *Agent) dispatch(ctx context.Context, tc llm.ToolCall) llm.Message {
 	reply := func(s string) llm.Message {
 		return llm.Message{Role: "tool", ToolCallID: tc.ID, Name: tc.Function.Name, Content: s}
@@ -454,7 +463,17 @@ func (a *Agent) dispatch(ctx context.Context, tc llm.ToolCall) llm.Message {
 		}
 	}
 
-	res, err := tool.Handler(ctx, args)
+	// Prefer the streaming variant on a streaming turn so long commands (bash)
+	// show live progress instead of appearing frozen until they finish. The live
+	// writer is line-prefixed + mutex-guarded so concurrent tool calls in one
+	// step don't garble each other.
+	var res string
+	var err error
+	if tool.Stream != nil && a.Streaming {
+		res, err = tool.Stream(ctx, args, a.toolStreamWriter(tc.Function.Name))
+	} else {
+		res, err = tool.Handler(ctx, args)
+	}
 	if err != nil {
 		// Tool errors are the diagnostic gold in a trace: record them verbatim
 		// (truncated) so replay shows WHY a worker burned steps.

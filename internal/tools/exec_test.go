@@ -47,3 +47,31 @@ func TestBashExecCap(t *testing.T) {
 		t.Fatalf("missing cap marker (len=%d)", len(out))
 	}
 }
+
+// BashExecStream tees live output to w AND returns the same captured result.
+func TestBashExecStreamTees(t *testing.T) {
+	var live strings.Builder
+	out, err := BashExecStream(context.Background(), "printf 'line1\\nline2\\n'", 10, &live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "line1") || !strings.Contains(out, "line2") {
+		t.Fatalf("captured result missing output: %q", out)
+	}
+	if !strings.Contains(live.String(), "line1") || !strings.Contains(live.String(), "line2") {
+		t.Fatalf("live writer missing output: %q", live.String())
+	}
+}
+
+// Streaming honors the process-group timeout just like the buffered path.
+func TestBashExecStreamTimeout(t *testing.T) {
+	var live strings.Builder
+	start := time.Now()
+	_, err := BashExecStream(context.Background(), "sleep 30 &", 1, &live)
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("expected timeout, got %v", err)
+	}
+	if time.Since(start) > 8*time.Second {
+		t.Fatalf("stream timeout leaked a background job: %s", time.Since(start))
+	}
+}

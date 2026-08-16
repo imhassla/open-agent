@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"io"
 	"strings"
 
 	"github.com/imhassla/open-agent/internal/tools"
@@ -68,6 +69,9 @@ func CoreTools() *Registry {
 			obj(props{"command": str("The bash command to run"), "timeout_sec": integer("Timeout in seconds (default 30)")}, "command")),
 		Handler: func(ctx context.Context, a map[string]any) (string, error) {
 			return tools.BashExec(ctx, argStr(a, "command"), argInt(a, "timeout_sec"))
+		},
+		Stream: func(ctx context.Context, a map[string]any, w io.Writer) (string, error) {
+			return tools.BashExecStream(ctx, argStr(a, "command"), argInt(a, "timeout_sec"), w)
 		},
 	})
 

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"io"
 	"sort"
 
 	"github.com/imhassla/open-agent/internal/llm"
@@ -10,10 +11,19 @@ import (
 // Handler executes a tool given parsed JSON args and returns its result text.
 type Handler func(ctx context.Context, args map[string]any) (string, error)
 
+// StreamHandler is an optional variant that tees live output to w while running
+// and returns the same result text as Handler. A tool that sets it (e.g. bash)
+// gets live progress on streaming turns; the loop falls back to Handler when
+// streaming is off or no writer is available.
+type StreamHandler func(ctx context.Context, args map[string]any, w io.Writer) (string, error)
+
 // Tool bundles the schema sent to the model with the handler that runs it.
 type Tool struct {
 	Def     llm.Tool
 	Handler Handler
+	// Stream, when set, is preferred over Handler on a streaming turn: it emits
+	// output live (through the writer the loop passes) as the tool runs.
+	Stream StreamHandler
 	// Applies marks a tool that CAN mutate the working tree (write_file/edit_file, and
 	// go_fmt). The agent loop uses this to detect, per-worker, whether a RequireApply
 	// (code) task actually applied a change — so it can't "complete" by only

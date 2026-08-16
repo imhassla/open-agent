@@ -1,8 +1,10 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -49,6 +51,33 @@ func BashExecDir(ctx context.Context, dir, command string, timeoutSec int) (stri
 		return "", fmt.Errorf("empty command")
 	}
 	return active.RunInDir(ctx, dir, command, timeoutSec)
+}
+
+// StreamRunner is the optional capability of a sandbox that can tee output to a
+// live writer as it runs (not just return it on completion). The host sandbox
+// implements it; a sandbox that can't stream simply isn't asserted to it and
+// callers fall back to the buffered BashExec.
+type StreamRunner interface {
+	RunStream(ctx context.Context, command string, timeoutSec int, w io.Writer) (string, error)
+}
+
+// BashExecStream runs a command and, when the active sandbox supports streaming,
+// tees combined stdout/stderr to w live while still returning the captured
+// (capped) result. When the active sandbox can't stream (e.g. Docker), it falls
+// back to the buffered BashExec — same result, just no live output.
+func BashExecStream(ctx context.Context, command string, timeoutSec int, w io.Writer) (string, error) {
+	if strings.TrimSpace(command) == "" {
+		return "", fmt.Errorf("empty command")
+	}
+	if sr, ok := active.(StreamRunner); ok && w != nil {
+		return sr.RunStream(ctx, command, timeoutSec, w)
+	}
+	return active.Run(ctx, command, timeoutSec)
+}
+
+// RunStream implements StreamRunner for the host sandbox.
+func (HostSandbox) RunStream(ctx context.Context, command string, timeoutSec int, w io.Writer) (string, error) {
+	return execCaptureStream(ctx, timeoutSec, "", w, "bash", "-c", command)
 }
 
 // HostSandbox runs commands directly on the host (default).
@@ -107,21 +136,13 @@ func DockerAvailable() bool {
 	return err == nil
 }
 
-func execCapture(ctx context.Context, timeoutSec int, dir, name string, args ...string) (string, error) {
-	if timeoutSec <= 0 {
-		timeoutSec = 30
-	}
-	cctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
-	defer cancel()
-
+// groupCmd builds a command that runs in its OWN process group so a timeout can
+// kill the whole tree — background jobs (`&`), pipelines and subshells — not just
+// the top-level shell. Without this a leaked child keeps the output pipe open and
+// the wait blocks long past the deadline (the "hangs after timeout_sec" bug).
+func groupCmd(cctx context.Context, dir, name string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(cctx, name, args...)
 	cmd.Dir = dir // empty => inherit the process working directory
-
-	// Run the command in its own process group so a timeout can kill the whole
-	// tree — background jobs (`&`), pipelines and subshells it spawns — not just
-	// the top-level bash. Without this, a leaked child keeps the output pipe open
-	// and CombinedOutput blocks long past the deadline (the command "hangs" well
-	// after timeout_sec; e.g. a ping/nmap sweep that backgrounds its probes).
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
@@ -136,20 +157,60 @@ func execCapture(ctx context.Context, timeoutSec int, dir, name string, args ...
 	// Backstop: if a grandchild still holds the pipe after the group kill, don't
 	// wait on it forever — abandon the I/O copy shortly after cancellation.
 	cmd.WaitDelay = 2 * time.Second
+	return cmd
+}
 
-	out, err := cmd.CombinedOutput()
-	res := capOutput(strings.TrimSpace(string(out)))
-
-	if cctx.Err() == context.DeadlineExceeded {
+// finalizeResult applies the shared result formatting (cap, timeout/exit
+// wrapping, empty-output marker) so the buffered and streaming paths agree.
+func finalizeResult(raw string, timedOut bool, timeoutSec int, runErr error) (string, error) {
+	res := capOutput(strings.TrimSpace(raw))
+	if timedOut {
 		return res, fmt.Errorf("command timed out after %ds", timeoutSec)
 	}
-	if err != nil {
-		return fmt.Sprintf("exit error: %v\n--- output ---\n%s", err, res), nil
+	if runErr != nil {
+		return fmt.Sprintf("exit error: %v\n--- output ---\n%s", runErr, res), nil
 	}
 	if res == "" {
 		res = "(command produced no output)"
 	}
 	return res, nil
+}
+
+func execCapture(ctx context.Context, timeoutSec int, dir, name string, args ...string) (string, error) {
+	if timeoutSec <= 0 {
+		timeoutSec = 30
+	}
+	cctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
+	defer cancel()
+
+	cmd := groupCmd(cctx, dir, name, args...)
+	out, err := cmd.CombinedOutput()
+	return finalizeResult(string(out), cctx.Err() == context.DeadlineExceeded, timeoutSec, err)
+}
+
+// execCaptureStream is execCapture that ALSO tees combined stdout/stderr to w as
+// it runs, so the caller sees live progress. It still captures the full output
+// and returns the identical (capped, error-wrapped) result.
+func execCaptureStream(ctx context.Context, timeoutSec int, dir string, w io.Writer, name string, args ...string) (string, error) {
+	if timeoutSec <= 0 {
+		timeoutSec = 30
+	}
+	cctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
+	defer cancel()
+
+	cmd := groupCmd(cctx, dir, name, args...)
+	var buf bytes.Buffer
+	mw := io.MultiWriter(&buf, w) // capture + live
+	cmd.Stdout = mw
+	cmd.Stderr = mw
+
+	var runErr error
+	if err := cmd.Start(); err != nil {
+		runErr = err
+	} else {
+		runErr = cmd.Wait()
+	}
+	return finalizeResult(buf.String(), cctx.Err() == context.DeadlineExceeded, timeoutSec, runErr)
 }
 
 // capOutput keeps the head and tail of oversized output with a marker between.
