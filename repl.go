@@ -90,6 +90,20 @@ func runSession(deps *orchestrator.Deps, opts options, seed string, pin orchestr
 	// captures deps.Emit); orchestrate turns swap in a JSONL-teeing bus for the run.
 	deps.Emit = s.render
 
+	// --continue resumes the previous dialog: the transcript and running spend are
+	// restored from ./.open-agent/session.json in the CURRENT directory (written
+	// after every turn) — so it resumes THIS project's dialog. Copy the project
+	// dir (or its .open-agent/) to another machine to continue there.
+	if opts.cont {
+		if st, ok := loadSession(); ok {
+			s.history = st.History
+			s.tokens, s.cost = st.Tokens, st.Cost
+			fmt.Fprintf(os.Stderr, "continuing previous session (%d exchange(s), ~$%.4f so far)\n", len(st.History)/2, st.Cost)
+		} else {
+			fmt.Fprintln(os.Stderr, "--continue: no previous session found; starting fresh")
+		}
+	}
+
 	// Chrome (banner, status prompt, announce, bye) goes to STDERR so stdout carries
 	// only the answer — a piped `open-agent "<prose>"` is then a clean one-shot.
 	fmt.Fprintf(os.Stderr, "open-agent — interactive session (family: %s, router: %s)\n", deps.Family, onOff(deps.Routing))
@@ -135,6 +149,9 @@ func (s *session) foldHistory(user, assistant string) {
 		total -= len(s.history[0].Content) + len(s.history[1].Content)
 		s.history = s.history[2:] // drop the oldest user/assistant pair
 	}
+	// Persist after every turn so the dialog survives a restart/update and can be
+	// resumed with --continue. Best-effort: a write failure never breaks the turn.
+	_ = saveSession(s)
 }
 
 // turn routes one user message: resolve intent (pin or classify) → converse (ask/code)

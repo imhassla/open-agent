@@ -407,6 +407,7 @@ type options struct {
 	changed      bool   // improve: focus = packages changed in the last 24h
 	every        string // schedule: recurring interval (30m, 6h, daily)
 	after        string // schedule: parent job id (chained job)
+	cont         bool   // --continue: resume the previous interactive session
 	family       string
 	families     string
 	mcp          string
@@ -461,6 +462,8 @@ func parseArgs(args []string) (options, []string, error) {
 			o.every, err = next(&i, args[i])
 		case "--after":
 			o.after, err = next(&i, args[i])
+		case "--continue", "-c":
+			o.cont = true
 		case "-f", "--family":
 			o.family, err = next(&i, args[i])
 		case "--families":

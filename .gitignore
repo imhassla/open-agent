@@ -8,3 +8,4 @@
 # editor/OS cruft
 .DS_Store
 /open-agent-dev
+.open-agent/

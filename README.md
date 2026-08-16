@@ -65,6 +65,17 @@ Resolution order (first match wins): the `OPENROUTER_KEY` env var → a `.env` i
 working directory → `~/.config/open-agent/.env`. For a single shell session you can just
 `export OPENROUTER_KEY=sk-or-...` instead. See `.env.example`.
 
+### Continue a dialog
+
+An interactive session is saved per-project to `.open-agent/session.json` in the current
+directory. Resume it (across restarts, updates, or machines — copy the dir) with:
+
+```sh
+open-agent --continue        # or: open-agent chat --continue / -c
+```
+
+Global learning (memory, router ratings, `do` run traces) lives in `~/.open-agent/`.
+
 ## Usage
 
 ```sh
