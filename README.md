@@ -91,7 +91,7 @@ Watch it live in `open-agent dashboard` → Router ladder.
 | Command                                | Purpose                                         |
 | -------------------------------------- | ----------------------------------------------- |
 | `code`                                 | autonomous coding agent (cwd)                   |
-| `ask`                                  | one-shot chat, no tools                         |
+| `ask`                                  | chat that can web-search when a question needs current facts |
 | `research`                             | read-only web research (grounded, cited search) |
 | `do`                                   | plan → parallel multi-model DAG → verify        |
 | `improve`                              | review → fix → verify cycle (fixes uncommitted) |

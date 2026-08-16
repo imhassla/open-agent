@@ -51,7 +51,7 @@ var roleSystem = map[Role]string{
 	RoleResearch: researchSystem,
 	RolePlan:     planSystem,
 	RoleJudge:    judgeSystem,
-	RoleCheap:    askSystem,
+	RoleCheap:    cheapSystem,
 }
 
 // familyModels maps each family's roles to model slugs. This is where several
@@ -182,7 +182,15 @@ at the start to recall relevant prior context (build commands, conventions, past
 memory_store to save durable facts worth keeping. For non-trivial functions or algorithms where
 correctness matters, use code_consensus to generate a best-of-N solution rather than writing it in one shot.`
 
-	askSystem = `You are a precise and helpful assistant. Answer directly and concisely.`
+	askSystem = `You are a precise, helpful assistant in a multi-turn conversation. Answer directly and concisely,
+using the conversation history for context. You HAVE web tools: call web_search for anything that is current,
+factual, versioned, or may have changed since your training data (today's date is given at the top of the
+conversation — use it to judge recency), and web_fetch to read a specific page a search surfaced. Do NOT
+search for things you already know or that don't depend on current data (translations, explanations,
+reasoning, code) — answer those directly in one turn. When you do use the web, weave the findings into a
+natural answer and cite source URLs. If information may still be stale or sources disagree, say so.`
+
+	cheapSystem = `You are a precise and helpful assistant. Answer directly and concisely.`
 
 	researchSystem = `You are a rigorous research agent. Use the web_search tool (it returns CURRENT, cited
 answers) for anything beyond your training data — facts, versions, docs, recent events — and web_fetch to read

@@ -50,8 +50,22 @@ type ApproveFunc = agent.ApproveFunc
 // (no tools); code gets the core tools + shared memory, plus
 // code_consensus.
 func RegistryFor(role Role, d *Deps, bud *budget.Budget) *agent.Registry {
-	if role == RoleAsk || role == RoleCheap {
-		return agent.NewRegistry()
+	if role == RoleCheap {
+		return agent.NewRegistry() // bulk/compaction tier stays a pure, fast, tool-free call
+	}
+	if role == RoleAsk {
+		// Ask can now SEARCH: the conversational tool set (web_search + web_fetch),
+		// upgraded to grounded Sonar, plus shared memory recall. It stays out of the
+		// coding tools — an ask turn answers, it doesn't build. The model calls a
+		// tool only when the question needs current/external facts, so trivial
+		// chat turns remain a single fast call.
+		reg := agent.AskTools()
+		agent.RegisterWebSearch(reg, d.Client, d.Search)
+		if d.Mem != nil {
+			agent.RegisterMemory(reg, d.Mem)
+			agent.RegisterSemanticRecall(reg, d.Client, d.Mem, llm.ModelEmbed)
+		}
+		return reg
 	}
 	reg := agent.CoreTools()
 	// Upgrade web_search from the scraped-DDG default to grounded, cited

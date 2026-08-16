@@ -7,6 +7,34 @@ import (
 	"github.com/imhassla/open-agent/internal/tools"
 )
 
+// AskTools returns the conversational tool set: web_search (DuckDuckGo by
+// default; upgrade to grounded Sonar with RegisterWebSearch) + web_fetch. It is
+// deliberately NOT the coding tool set — an ask turn searches and reads the web
+// to answer, it does not run bash or touch files. A tool-free chat is still the
+// common case: the model calls these only when the question needs current or
+// external facts, so trivial turns stay a single fast call.
+func AskTools() *Registry {
+	r := NewRegistry()
+	r.Register(Tool{
+		Def: schema("web_search",
+			"Search the web for CURRENT information. Returns ranked results (or a grounded cited answer). "+
+				"Use for facts, versions, docs, news, prices — anything past your training data or that may have changed.",
+			obj(props{"query": str("Search query"), "max_results": integer("Max results (default 5)")}, "query")),
+		Handler: func(ctx context.Context, a map[string]any) (string, error) {
+			return tools.SearchDDG(ctx, argStr(a, "query"), argInt(a, "max_results"))
+		},
+	})
+	r.Register(Tool{
+		Def: schema("web_fetch",
+			"Fetch a URL and return its cleaned text content (markup stripped). Use to read a specific page a search surfaced.",
+			obj(props{"url": str("The URL to fetch")}, "url")),
+		Handler: func(ctx context.Context, a map[string]any) (string, error) {
+			return tools.FetchPage(ctx, argStr(a, "url"), 0)
+		},
+	})
+	return r
+}
+
 // CoreTools returns the default tool registry: web search/fetch, bash, file
 // read/write, and final_answer.
 func CoreTools() *Registry {

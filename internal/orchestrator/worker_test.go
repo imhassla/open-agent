@@ -66,8 +66,22 @@ func TestRegistryForRoles(t *testing.T) {
 		}
 	}
 
-	if n := len(RegistryFor(RoleAsk, d, nil).Defs()); n != 0 {
-		t.Errorf("ask registry should have no tools, got %d", n)
+	// Ask can search: it gets the conversational web tools (upgraded to grounded
+	// Sonar), but NOT the coding tools — an ask turn answers, it doesn't build.
+	ask := toolNames(RegistryFor(RoleAsk, d, nil))
+	for _, want := range []string{"web_search", "web_fetch"} {
+		if !ask[want] {
+			t.Errorf("ask registry missing %q", want)
+		}
+	}
+	for _, no := range []string{"bash", "edit_file", "write_file", "code_consensus"} {
+		if ask[no] {
+			t.Errorf("ask registry must NOT have the coding tool %q", no)
+		}
+	}
+	// Cheap (bulk/compaction) stays tool-free and fast.
+	if n := len(RegistryFor(RoleCheap, d, nil).Defs()); n != 0 {
+		t.Errorf("cheap registry should have no tools, got %d", n)
 	}
 }
 
