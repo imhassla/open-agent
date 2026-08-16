@@ -30,7 +30,7 @@ you the whole thing in a built-in dashboard.
 
 ```sh
 # Homebrew (macOS arm64 / Linux amd64) — recommended
-brew install imhassla/tap/open-agent
+brew install imhassla/tap/open-agent   # auto-updates on every release
 ```
 
 ```sh
