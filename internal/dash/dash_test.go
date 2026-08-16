@@ -544,3 +544,34 @@ func TestHandleLadder(t *testing.T) {
 		}
 	})
 }
+
+// A one-shot/bench run (meta.json + events.jsonl, no plan.json/blackboard.json)
+// must list with its goal and event-summed cost — not blank/$0.
+func TestReadRunInfoMetaFallback(t *testing.T) {
+	dir := t.TempDir()
+	runsDir := filepath.Join(dir, "runs")
+	rd := filepath.Join(runsDir, "20260816-oneshot")
+	if err := os.MkdirAll(rd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(rd, "meta.json"), []byte(`{"goal":"fix the parser","kind":"code"}`), 0o644)
+	os.WriteFile(filepath.Join(rd, "events.jsonl"), []byte(
+		`{"Kind":"step","Cost":0.001,"Tokens":100}`+"\n"+
+			`{"Kind":"tool","Cost":0,"Tokens":0}`+"\n"+
+			`{"Kind":"step","Cost":0.002,"Tokens":200}`+"\n"), 0o644)
+
+	s := New(dir)
+	info, err := s.readRunInfo(runsDir, "20260816-oneshot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Goal != "[code] fix the parser" {
+		t.Fatalf("goal = %q", info.Goal)
+	}
+	if info.Tasks != 1 {
+		t.Fatalf("tasks = %d", info.Tasks)
+	}
+	if info.Tokens != 300 || info.Cost < 0.0029 || info.Cost > 0.0031 {
+		t.Fatalf("cost/tokens from events wrong: $%.4f / %d", info.Cost, info.Tokens)
+	}
+}

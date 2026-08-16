@@ -124,7 +124,7 @@ func (s *Server) readRunInfo(runsPath, runID string) (RunInfo, error) {
 		}
 	}
 
-	// Read blackboard.json
+	// Read blackboard.json (do-runs carry per-task cost/tokens here).
 	blackboardPath := filepath.Join(runsPath, runID, "blackboard.json")
 	if data, err := os.ReadFile(blackboardPath); err == nil {
 		var blackboard map[string]struct {
@@ -139,7 +139,53 @@ func (s *Server) readRunInfo(runsPath, runID string) (RunInfo, error) {
 		}
 	}
 
+	// Fallback for one-shot / bench runs: they have no plan.json/blackboard.json,
+	// only meta.json (goal/kind) + events.jsonl (per-step cost/tokens). Without
+	// this they list with an empty goal and $0 — the CLI `runs` command already
+	// reads both, so the dashboard must too.
+	if result.Goal == "" {
+		if data, err := os.ReadFile(filepath.Join(runsPath, runID, "meta.json")); err == nil {
+			var meta struct {
+				Goal string `json:"goal"`
+				Kind string `json:"kind"`
+			}
+			if json.Unmarshal(data, &meta) == nil && meta.Goal != "" {
+				result.Goal = "[" + meta.Kind + "] " + meta.Goal
+				result.Tasks = 1
+			}
+		}
+	}
+	if result.Cost == 0 && result.Tokens == 0 {
+		result.Cost, result.Tokens = scanEventsCostTokens(filepath.Join(runsPath, runID, "events.jsonl"))
+	}
+
 	return result, nil
+}
+
+// scanEventsCostTokens sums per-step cost/tokens from a run's event trace — the
+// cost source for one-shot/bench runs that have no blackboard.
+func scanEventsCostTokens(path string) (float64, int) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, 0
+	}
+	defer f.Close()
+	var cost float64
+	var tokens int
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for sc.Scan() {
+		var e struct {
+			Kind   string  `json:"Kind"`
+			Cost   float64 `json:"Cost"`
+			Tokens int     `json:"Tokens"`
+		}
+		if json.Unmarshal(sc.Bytes(), &e) == nil && e.Kind == "step" {
+			cost += e.Cost
+			tokens += e.Tokens
+		}
+	}
+	return cost, tokens
 }
 
 // handleRun implements GET /api/run.
