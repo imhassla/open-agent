@@ -60,7 +60,11 @@ func CoreTools() *Registry {
 
 	r.Register(Tool{
 		Def: schema("bash",
-			"Run a bash command and return combined stdout/stderr. Use for builds, tests, git, and file inspection.",
+			"Run a bash command and return combined stdout/stderr. Use for builds, tests, git, and file inspection. "+
+				"Output returns only when the command FINISHES (not streamed), and the whole process group is killed at "+
+				"timeout_sec. So make long work SELF-BOUNDED rather than relying on the timeout: prefer per-item timeouts "+
+				"and a hard overall budget (e.g. `nmap -sn --host-timeout 2s`, `fping -a -g`, `timeout 20 <cmd>`, "+
+				"`curl --max-time 5`), and avoid unbounded scans/backgrounded jobs whose children outlive the shell.",
 			obj(props{"command": str("The bash command to run"), "timeout_sec": integer("Timeout in seconds (default 30)")}, "command")),
 		Handler: func(ctx context.Context, a map[string]any) (string, error) {
 			return tools.BashExec(ctx, argStr(a, "command"), argInt(a, "timeout_sec"))
