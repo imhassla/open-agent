@@ -1,10 +1,14 @@
-# Auto-release on every push to main: compute the next patch version, tag it,
-# build the release assets, publish the GitHub Release, and bump the Homebrew
-# tap formula (imhassla/homebrew-tap) to the new version — so `brew upgrade
-# open-agent` always tracks main. A manual `git tag vX.Y.Z && git push` still
-# works (the tags trigger below).
+# Opt-IN release: a push to main publishes a release ONLY when its commit
+# message carries a release marker. No marker = a normal push, no release.
+#   [release]         or [release:patch]  → bump the patch (x.y.Z)
+#   [release:minor]                       → bump the minor (x.Y.0)
+#   [release:major]                       → bump the major (X.0.0)
+# A manual `git tag vX.Y.Z && git push origin vX.Y.Z` still releases that exact
+# version (the tags trigger below).
 #
-# Skip a release for a given push with "[skip release]" in the commit message.
+# Each release: compute the version, tag it, build assets, publish the GitHub
+# Release, and bump the Homebrew tap formula (imhassla/homebrew-tap) so
+# `brew upgrade open-agent` tracks it.
 #
 # One-time setup for the brew bump: a PAT with contents:write on
 # imhassla/homebrew-tap stored as the secret HOMEBREW_TAP_TOKEN in this repo
@@ -26,7 +30,7 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    if: "!contains(github.event.head_commit.message, '[skip release]')"
+    if: "github.ref_type == 'tag' || contains(github.event.head_commit.message, '[release')"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -46,12 +50,19 @@ jobs:
             # Manual tag push: use it verbatim.
             VERSION="${GITHUB_REF_NAME#v}"
           else
-            # Branch push: bump the patch of the latest v* tag (default v0.1.0).
+            # Branch push: bump the latest v* tag by the level in the marker
+            # ([release]/[release:patch] → patch, [release:minor], [release:major]).
+            msg="$(git log -1 --format=%B)"
             latest="$(git tag --list 'v*' --sort=-v:refname | head -n1)"
             latest="${latest:-v0.0.0}"
             base="${latest#v}"
             IFS=. read -r major minor patch <<< "${base}"
-            VERSION="${major}.${minor}.$((patch + 1))"
+            case "${msg}" in
+              *'[release:major]'*) major=$((major + 1)); minor=0; patch=0 ;;
+              *'[release:minor]'*) minor=$((minor + 1)); patch=0 ;;
+              *)                   patch=$((patch + 1)) ;;
+            esac
+            VERSION="${major}.${minor}.${patch}"
             git tag "v${VERSION}"
             git push origin "v${VERSION}"
           fi

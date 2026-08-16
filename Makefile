@@ -9,14 +9,30 @@ ifeq ($(GOBIN),)
 GOBIN := $(shell go env GOPATH)/bin
 endif
 BIN ?= $(GOBIN)/open-agent
+# Dev binary: a DISTINCT name so it never shadows (or gets shadowed by) the
+# Homebrew-installed `open-agent` at /opt/homebrew/bin. Invoke it as
+# `open-agent-dev`; its `version` output is tagged `open-agent-dev` too.
+DEVBIN ?= $(GOBIN)/open-agent-dev
 
-.PHONY: build install test race preflight build-treesitter install-treesitter test-treesitter
+.PHONY: build install dev dev-build test race preflight build-treesitter install-treesitter test-treesitter
 
 build:
 	go build -o open-agent .
 
 install:
 	go build -o $(BIN) .
+
+# dev — build + install the dev binary as `open-agent-dev` (own name, own version
+# label). Use this to test local changes WITHOUT touching the brew-managed
+# `open-agent`. Run: `open-agent-dev <verb> ...`.
+dev:
+	go build -ldflags "-X main.devLabel=dev" -o $(DEVBIN) .
+	@echo "installed $(DEVBIN)  —  run as: open-agent-dev version"
+
+# dev-build — same dev binary, left in the working tree as ./open-agent-dev
+# (not installed), for a throwaway local run.
+dev-build:
+	go build -ldflags "-X main.devLabel=dev" -o open-agent-dev .
 
 test:
 	go test ./...

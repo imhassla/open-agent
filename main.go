@@ -541,6 +541,11 @@ func parseArgs(args []string) (options, []string, error) {
 // buildVersion reports the binary's version from the embedded build info: the
 // module version (when installed via `go install module@version`) plus the VCS
 // revision/time stamped by the Go toolchain. Zero pipeline, zero deps.
+// devLabel is set via -ldflags "-X main.devLabel=dev" by `make dev` so a locally
+// built binary is unmistakable in `version` output and never confused with the
+// released (Homebrew) build.
+var devLabel string
+
 func buildVersion() string {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
@@ -565,7 +570,11 @@ func buildVersion() string {
 			}
 		}
 	}
-	out := "open-agent " + ver
+	name := "open-agent"
+	if devLabel != "" {
+		name += "-" + devLabel // e.g. "open-agent-dev" — a local build, not the release
+	}
+	out := name + " " + ver
 	if rev != "" {
 		out += " (" + rev + dirty + ")"
 	}
