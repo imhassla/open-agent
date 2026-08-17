@@ -177,6 +177,23 @@ func GoFmtPreview(path string) (before, after string, err error) {
 	return string(src), string(out), nil
 }
 
+// CheckGoSyntax parses a .go file in-process and returns a non-nil error only
+// when the file no longer parses (a syntax error) — a single-file, no-compile
+// check for the post-edit verify hook. It is deliberately parse-only, NOT gofmt:
+// it must not depend on formatting state (a valid-but-unformatted file is fine),
+// so it never nudges toward a whole-file reformat. AllErrors makes the message
+// point at the first real breakage.
+func CheckGoSyntax(path string) error {
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if _, err := parser.ParseFile(token.NewFileSet(), path, src, parser.AllErrors); err != nil {
+		return err
+	}
+	return nil
+}
+
 // GoFmt formats a .go file with go/format (in-process gofmt). With write it
 // rewrites the file; otherwise it returns the formatted source.
 func GoFmt(path string, write bool) (string, error) {

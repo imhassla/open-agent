@@ -536,6 +536,13 @@ func (a *Agent) dispatch(ctx context.Context, tc llm.ToolCall) llm.Message {
 		resNote += " | " + truncate(strings.ReplaceAll(res, "\n", " "), 160)
 	}
 	a.emit(event.Event{Kind: "toolres", TaskID: a.Label, Model: a.Model, Text: resNote})
+	// Post-edit verify hook: after a code worker successfully writes a .go file,
+	// append a fast gofmt-parse finding so a syntax-breaking edit is caught on
+	// this step. Best-effort and appended to res BEFORE noteRepeat so the note is
+	// part of the fingerprint (an identical edit+finding still de-dupes).
+	if note := a.postEditVerify(tc.Function.Name, tool, args); note != "" {
+		res += note
+	}
 	return reply(a.noteRepeat(tc.Function.Name, tc.Function.Arguments, res))
 }
 
