@@ -39,6 +39,7 @@ func TestParseMCPToolResult(t *testing.T) {
 
 func TestLoadMCPServers(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	p := filepath.Join(dir, ".mcp.json")
 	writeFile(t, p, `{"mcpServers":{"fs":{"command":"mcp-fs","args":["--root","/tmp"]},"web":{"command":"mcp-web"}}}`)
 	servers, err := LoadMCPServers(p)

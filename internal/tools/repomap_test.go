@@ -8,6 +8,7 @@ import (
 
 func TestRepoMap(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	writeFile(t, filepath.Join(dir, "a.go"),
 		"package a\n\nfunc Foo() {}\n\ntype Bar struct{}\n\nfunc (b Bar) Baz() {}\n")
 	writeFile(t, filepath.Join(dir, "b.py"),

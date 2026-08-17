@@ -197,6 +197,11 @@ func CheckGoSyntax(path string) error {
 // GoFmt formats a .go file with go/format (in-process gofmt). With write it
 // rewrites the file; otherwise it returns the formatted source.
 func GoFmt(path string, write bool) (string, error) {
+	if write {
+		if err := ConfineWrite(path); err != nil {
+			return "", err
+		}
+	}
 	src, err := os.ReadFile(path)
 	if err != nil {
 		return "", err

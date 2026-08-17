@@ -115,6 +115,19 @@ For scripted/agent callers (e.g. a supervising LLM delegating subtasks), see
 [`AGENTS.md`](AGENTS.md) — the machine contract (`--json` envelope, cost caps, tier
 policy, sandbox recipes).
 
+**Guardrails** (on by default): mutating file *tools* refuse to write outside the working
+directory (absolute paths out of tree, `../` escapes, symlink targets), and `bash` rejects
+a tight list of catastrophic command shapes (recursive `rm` of `/` or `~`, force-push —
+including `--force-with-lease`: an unattended worker rewrites no history, fork bomb,
+`mkfs`/`dd` to raw devices, curl-pipe-to-shell). Scope honesty: the bash layer filters
+known-catastrophic *shapes* only — an arbitrary bash redirect can still write outside the
+tree; the hardened Docker sandbox is the boundary for genuinely untrusted work. A denial
+is a normal tool error the model can read and adapt to. `OPEN_AGENT_NO_GUARDRAILS=1`
+disables both layers for legitimate out-of-tree work.
+Related switches: `OPEN_AGENT_ADAPTIVE=0` turns off the per-model lab-recommended
+prompting/sampling layer; `OPEN_AGENT_NO_REASONING_REPLAY=1` turns off MiniMax
+interleaved-thinking replay.
+
 ## The cost-ladder router
 
 Every role's candidate set is all families' models for that role, ordered by _observed

@@ -17,6 +17,7 @@ const (
 	FaultShadowPkg     = "shadow_package" // same-named subpackage attempt
 	FaultOversized     = "oversized_call" // provider rejected an oversized/poisoned call
 	FaultEditMiss      = "edit_miss"      // edit anchor not found / ambiguous (edit_file, apply_patch)
+	FaultGuardrail     = "guardrail"      // denied by a write-confinement / bash-denylist rule
 )
 
 // FaultClass buckets one tool-error string ("" = no recognized class).
@@ -38,6 +39,8 @@ func FaultClass(errText string) string {
 	// "old_string not found"/"occurs N times" and apply_patch's identical wording.
 	case strings.Contains(e, "not found in") || (strings.Contains(e, "occurs") && strings.Contains(e, "times in")):
 		return FaultEditMiss
+	case strings.Contains(e, "blocked by guardrail"):
+		return FaultGuardrail
 	}
 	return ""
 }
@@ -79,6 +82,7 @@ var faultHintText = map[string]string{
 	FaultShadowPkg:     "Recent runs with this model created same-named subpackages — add code to the EXISTING package directory.",
 	FaultOversized:     "Recent runs with this model sent oversized tool calls — build large files in parts (≤150 lines per call).",
 	FaultEditMiss:      "Recent runs with this model missed edit anchors (old_string/search not found or ambiguous) — copy the existing text VERBATIM from a fresh read_file and include enough surrounding lines to make it unique.",
+	FaultGuardrail:     "Recent runs with this model hit guardrail denials — stay inside the working directory (relative paths, no ../ or ~) and avoid destructive shell shapes; a denial will not succeed on retry.",
 }
 
 // FaultHints returns preamble hints targeted at ONE model's recent fault

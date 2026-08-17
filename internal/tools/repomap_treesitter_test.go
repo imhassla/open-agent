@@ -12,6 +12,7 @@ import (
 // (Rust, Java), proving the tree-sitter build adds real multi-language coverage.
 func TestRepoMapTreeSitterMultiLang(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	writeFile(t, filepath.Join(dir, "m.rs"), "fn launch() {}\nstruct Engine {}\ntrait Run {}\n")
 	writeFile(t, filepath.Join(dir, "M.java"), "class Foo {\n  void bar() {}\n}\ninterface Baz {}\n")
 

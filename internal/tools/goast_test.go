@@ -9,7 +9,8 @@ import (
 )
 
 func TestGoSymbols(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "x.go")
+	t.Chdir(t.TempDir()) // guardrails confine writes to cwd
+	p := filepath.Join(".", "x.go")
 	writeFile(t, p, "package x\n\nconst K = 1\n\nfunc Foo(a int) string { return \"\" }\n\ntype Bar struct{}\n\nfunc (b Bar) Baz() {}\n")
 	out, err := GoSymbols(p)
 	if err != nil {
@@ -24,6 +25,7 @@ func TestGoSymbols(t *testing.T) {
 
 func TestGoFindRefs(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	writeFile(t, filepath.Join(dir, "a.go"), "package x\n\nfunc Foo() {}\n\nfunc Bar() { Foo() }\n")
 	out, err := GoFindRefs(dir, "Foo", 100)
 	if err != nil {
@@ -38,6 +40,7 @@ func TestGoFindRefs(t *testing.T) {
 // regression for ast.Inspect's no-op false return overshooting max.
 func TestGoFindRefsCap(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	var sb strings.Builder
 	sb.WriteString("package x\n")
 	for i := 0; i < 12; i++ { // 12 distinct lines each referencing Foo
@@ -68,6 +71,7 @@ func TestGoFindRefsCap(t *testing.T) {
 // clean; "not valid Go" matches GoFmt(write=true) so preview and apply agree.
 func TestGoFmtPreview(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 
 	// Unformatted: before = source, after = gofmt'd, disk untouched.
 	p := filepath.Join(dir, "x.go")
@@ -105,7 +109,8 @@ func TestGoFmtPreview(t *testing.T) {
 }
 
 func TestGoFmt(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "x.go")
+	t.Chdir(t.TempDir()) // guardrails confine writes to cwd
+	p := filepath.Join(".", "x.go")
 	writeFile(t, p, "package x\nfunc  Foo( ){}\n")
 
 	out, err := GoFmt(p, false)

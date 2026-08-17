@@ -9,6 +9,7 @@ import (
 
 func TestRunGoTests(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	writeFile(t, filepath.Join(dir, "go.mod"), "module tmptest\n\ngo 1.21\n")
 	writeFile(t, filepath.Join(dir, "x_test.go"),
 		"package tmptest\n\nimport \"testing\"\n\nfunc TestPass(t *testing.T) {}\n\nfunc TestFail(t *testing.T) { t.Fatal(\"boom\") }\n")
@@ -30,6 +31,7 @@ func TestRunGoTests(t *testing.T) {
 // package's tests pass. Regression for the dropped-package-event false-green.
 func TestRunGoTestsBuildFailure(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	writeFile(t, filepath.Join(dir, "go.mod"), "module tmptest\n\ngo 1.21\n")
 	// Package "ok" compiles and passes.
 	writeFile(t, filepath.Join(dir, "ok", "ok_test.go"),

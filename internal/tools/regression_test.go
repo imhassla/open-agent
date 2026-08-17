@@ -15,6 +15,7 @@ import (
 func initGoRepo(t *testing.T, addBody string) (string, *git.Repository) {
 	t.Helper()
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	repo, err := git.PlainInit(dir, false)
 	if err != nil {
 		t.Fatal(err)
@@ -76,6 +77,7 @@ func TestRegressionCheckTestRemovalNotRegression(t *testing.T) {
 // closure, even though only `a` was edited and `a` has no tests of its own.
 func TestRegressionCheckCrossPackage(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	repo, err := git.PlainInit(dir, false)
 	if err != nil {
 		t.Fatal(err)

@@ -24,7 +24,8 @@ func helper() int { return 1 }
 
 func seedGoFile(t *testing.T) string {
 	t.Helper()
-	p := filepath.Join(t.TempDir(), "demo.go")
+	t.Chdir(t.TempDir()) // guardrails confine writes to cwd
+	p := filepath.Join(".", "demo.go")
 	if err := os.WriteFile(p, []byte(goReplaceSeed), 0o644); err != nil {
 		t.Fatal(err)
 	}

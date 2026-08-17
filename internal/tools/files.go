@@ -331,6 +331,9 @@ func ReadFileLines(path string, start, end int) (string, error) {
 // single source of truth for both EditFile (write) and EditFilePreview (diff gate),
 // so the four error conditions and the replacement semantics can never drift.
 func editPlan(path, oldStr, newStr string, replaceAll bool) (before, after string, n int, err error) {
+	if err := ConfineWrite(path); err != nil {
+		return "", "", 0, err
+	}
 	if oldStr == "" {
 		return "", "", 0, fmt.Errorf("old_string must not be empty")
 	}
@@ -385,7 +388,12 @@ func EditFilePreview(path, oldStr, newStr string, replaceAll bool) (before, afte
 
 // WriteFilePreview returns the current content (before; "" for a new file), the
 // proposed content (after), and whether the file is new — for the diff gate.
+// Confined like WriteFile so the gate never previews (and a human never
+// approves) a write the apply path would then deny.
 func WriteFilePreview(path, content string) (before, after string, isNew bool, err error) {
+	if err := ConfineWrite(path); err != nil {
+		return "", "", false, err
+	}
 	data, rerr := os.ReadFile(path)
 	if rerr != nil {
 		if os.IsNotExist(rerr) {
@@ -398,6 +406,9 @@ func WriteFilePreview(path, content string) (before, after string, isNew bool, e
 
 // WriteFile writes content to path, creating parent directories and overwriting.
 func WriteFile(path, content string) (string, error) {
+	if err := ConfineWrite(path); err != nil {
+		return "", err
+	}
 	if err := checkShadowPackage(path, content); err != nil {
 		return "", err
 	}

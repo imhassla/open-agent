@@ -22,6 +22,7 @@ func gateReg(approve ApproveFunc) (write, edit Handler) {
 // (byte-identical to the un-gated path) is returned.
 func TestGateApproveApplies(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	p := filepath.Join(dir, "a.txt")
 	if err := os.WriteFile(p, []byte("hello world\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -59,6 +60,7 @@ func TestGateApproveApplies(t *testing.T) {
 // the loop continues and the model can adapt — not a tool failure).
 func TestGateRejectLeavesDiskUntouched(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	p := filepath.Join(dir, "a.txt")
 	const orig = "keep me\n"
 	if err := os.WriteFile(p, []byte(orig), 0o644); err != nil {
@@ -84,6 +86,7 @@ func TestGateRejectLeavesDiskUntouched(t *testing.T) {
 // the file with exactly the requested content.
 func TestGateApproveNewFileWrite(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	p := filepath.Join(dir, "fresh.txt")
 	var seenDiff string
 	write, _ := gateReg(func(path, diff string) bool { seenDiff = diff; return true })
@@ -107,6 +110,7 @@ func TestGateApproveNewFileWrite(t *testing.T) {
 // tool ERROR and approve is NEVER consulted (nothing to show).
 func TestGateErrorPassthroughApproveUncalled(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	p := filepath.Join(dir, "a.txt")
 	if err := os.WriteFile(p, []byte("abc\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -132,6 +136,7 @@ func TestGateErrorPassthroughApproveUncalled(t *testing.T) {
 // there is no change to approve, and the apply must still succeed.
 func TestGateIdenticalWriteSilent(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	p := filepath.Join(dir, "a.txt")
 	const content = "unchanged\n"
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
@@ -159,6 +164,7 @@ func TestGateIdenticalWriteSilent(t *testing.T) {
 // so writes apply with no prompt — the one-shot / DAG / auto invariant.
 func TestGateNilApproveUntouched(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	p := filepath.Join(dir, "a.txt")
 	write, _ := gateReg(nil)
 	if _, err := write(context.Background(), map[string]any{"path": p, "content": "x\n"}); err != nil {
@@ -173,6 +179,7 @@ func TestGateNilApproveUntouched(t *testing.T) {
 // the first, leaving the second's target untouched.
 func TestGatePerEditDecision(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	pa := filepath.Join(dir, "a.txt")
 	pb := filepath.Join(dir, "b.txt")
 	if err := os.WriteFile(pa, []byte("aaa\n"), 0o644); err != nil {
@@ -202,6 +209,7 @@ func TestGatePerEditDecision(t *testing.T) {
 // mutation) — the before==after silent path must not swallow an isNew write.
 func TestGateNewEmptyFilePrompts(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	p := filepath.Join(dir, "empty.txt")
 	called := false
 	var seenDiff string
@@ -223,6 +231,7 @@ func TestGateNewEmptyFilePrompts(t *testing.T) {
 
 func TestGateNewEmptyFileRejectNotCreated(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	p := filepath.Join(dir, "empty.txt")
 	write, _ := gateReg(func(path, diff string) bool { return false })
 
@@ -251,6 +260,7 @@ func TestGateGoFmtWriteGated(t *testing.T) {
 
 	// reject → file unchanged
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	pr := filepath.Join(dir, "r.go")
 	if err := os.WriteFile(pr, []byte(unformatted), 0o644); err != nil {
 		t.Fatal(err)
@@ -284,6 +294,7 @@ func TestGateGoFmtWriteGated(t *testing.T) {
 func TestGateGoFmtReadOnlyUngated(t *testing.T) {
 	const unformatted = "package x\nvar X=1\n"
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	p := filepath.Join(dir, "x.go")
 	if err := os.WriteFile(p, []byte(unformatted), 0o644); err != nil {
 		t.Fatal(err)

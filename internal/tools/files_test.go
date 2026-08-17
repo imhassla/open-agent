@@ -19,7 +19,8 @@ func writeFile(t *testing.T, path, content string) {
 }
 
 func TestEditFileUnique(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "a.txt")
+	t.Chdir(t.TempDir()) // guardrails confine writes to cwd
+	p := filepath.Join(".", "a.txt")
 	writeFile(t, p, "hello world\n")
 	if _, err := EditFile(p, "world", "gophers", false); err != nil {
 		t.Fatal(err)
@@ -31,7 +32,8 @@ func TestEditFileUnique(t *testing.T) {
 }
 
 func TestEditFileNotFound(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "a.txt")
+	t.Chdir(t.TempDir()) // guardrails confine writes to cwd
+	p := filepath.Join(".", "a.txt")
 	writeFile(t, p, "abc")
 	if _, err := EditFile(p, "xyz", "q", false); err == nil {
 		t.Fatal("expected not-found error")
@@ -39,7 +41,8 @@ func TestEditFileNotFound(t *testing.T) {
 }
 
 func TestEditFileAmbiguous(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "a.txt")
+	t.Chdir(t.TempDir()) // guardrails confine writes to cwd
+	p := filepath.Join(".", "a.txt")
 	writeFile(t, p, "x x x")
 	if _, err := EditFile(p, "x", "y", false); err == nil {
 		t.Fatal("expected ambiguous-match error")
@@ -54,7 +57,8 @@ func TestEditFileAmbiguous(t *testing.T) {
 }
 
 func TestReadFileLines(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "a.txt")
+	t.Chdir(t.TempDir()) // guardrails confine writes to cwd
+	p := filepath.Join(".", "a.txt")
 	writeFile(t, p, "l1\nl2\nl3\nl4\n")
 
 	out, err := ReadFileLines(p, 2, 3)
@@ -87,7 +91,8 @@ func TestReadFileLines(t *testing.T) {
 // EditFilePreview computes before/after WITHOUT mutating disk, and reports the SAME
 // four error conditions as EditFile (the shared editPlan source of truth).
 func TestEditFilePreviewNoMutate(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "a.txt")
+	t.Chdir(t.TempDir()) // guardrails confine writes to cwd
+	p := filepath.Join(".", "a.txt")
 	writeFile(t, p, "hello world\n")
 
 	before, after, err := EditFilePreview(p, "world", "gophers", false)
@@ -105,6 +110,7 @@ func TestEditFilePreviewNoMutate(t *testing.T) {
 
 func TestEditFilePreviewErrorsMatchEditFile(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	p := filepath.Join(dir, "a.txt")
 	writeFile(t, p, "x x x")
 	missing := filepath.Join(dir, "nope.txt")
@@ -137,7 +143,8 @@ func TestEditFilePreviewErrorsMatchEditFile(t *testing.T) {
 // EditFile's observable behavior (bytes written + result message) must not have
 // drifted when it was refactored onto editPlan.
 func TestEditFileResultMessageStable(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "a.txt")
+	t.Chdir(t.TempDir()) // guardrails confine writes to cwd
+	p := filepath.Join(".", "a.txt")
 	writeFile(t, p, "x x x")
 	msg, err := EditFile(p, "x", "y", true)
 	if err != nil {
@@ -153,6 +160,7 @@ func TestEditFileResultMessageStable(t *testing.T) {
 
 func TestWriteFilePreview(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 
 	// New file: before "", isNew true, nothing on disk.
 	newPath := filepath.Join(dir, "new.txt")
@@ -186,7 +194,8 @@ func TestWriteFilePreview(t *testing.T) {
 // names the shown/total sizes and the exact 1-based line to resume from, and the
 // cut lands on a line boundary so that resume line is accurate.
 func TestReadFileTruncationMarker(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "big.txt")
+	t.Chdir(t.TempDir()) // guardrails confine writes to cwd
+	p := filepath.Join(".", "big.txt")
 	var sb strings.Builder
 	for i := 1; i <= 500; i++ {
 		fmt.Fprintf(&sb, "line-%04d some padding text to make lines non-trivial\n", i)
@@ -222,7 +231,8 @@ func TestReadFileTruncationMarker(t *testing.T) {
 // with a marker naming the exact resume line — start=1 on a big file must not
 // dump the whole file.
 func TestReadFileLinesRangeCap(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "big.txt")
+	t.Chdir(t.TempDir()) // guardrails confine writes to cwd
+	p := filepath.Join(".", "big.txt")
 	var sb strings.Builder
 	line := strings.Repeat("x", 200)
 	total := rangeMaxChars/len(line) + 100 // comfortably past the cap
@@ -263,6 +273,7 @@ func TestReadFileLinesRangeCap(t *testing.T) {
 // one must error listing candidates; edit_file must suggest but never redirect.
 func TestMisPathedFileResolution(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	writeFile(t, filepath.Join(dir, "pipeline.go"), "package p\n// marker-xyz\n")
 	writeFile(t, filepath.Join(dir, "sub", "other.go"), "package q\n")
 	old, _ := os.Getwd()
@@ -315,6 +326,7 @@ func TestMisPathedFileResolution(t *testing.T) {
 // genuinely new package name, package main, and non-Go files all pass.
 func TestWriteFileShadowPackageGuard(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	writeFile(t, filepath.Join(dir, "base.go"), "package bench\n\nfunc Identity(x int) int { return x }\n")
 
 	// Shadowing: bench/clamp.go with package bench while ../base.go is package bench.
@@ -353,6 +365,7 @@ func TestWriteFileShadowPackageGuard(t *testing.T) {
 // by ANY route (bash heredocs bypass the write_file guard).
 func TestFindShadowPackages(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	writeFile(t, filepath.Join(dir, "base.go"), "package bench\n")
 	writeFile(t, filepath.Join(dir, "bench", "clamp.go"), "package bench\n")
 	writeFile(t, filepath.Join(dir, "util", "u.go"), "package util\n")
@@ -375,6 +388,7 @@ func TestFindShadowPackages(t *testing.T) {
 // them after the fact; legitimate layouts pass.
 func TestPyShadowGuard(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	writeFile(t, filepath.Join(dir, "pkg", "__init__.py"), "")
 	writeFile(t, filepath.Join(dir, "pkg", "core.py"), "x = 1\n")
 	writeFile(t, filepath.Join(dir, "single.py"), "y = 2\n")
@@ -402,6 +416,7 @@ func TestPyShadowGuard(t *testing.T) {
 
 func TestFindShadowPackagesPython(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	writeFile(t, filepath.Join(dir, "pkg.py"), "")
 	writeFile(t, filepath.Join(dir, "pkg", "__init__.py"), "")
 	writeFile(t, filepath.Join(dir, "app", "app", "core.py"), "")

@@ -41,6 +41,9 @@ func BashExec(ctx context.Context, command string, timeoutSec int) (string, erro
 	if strings.TrimSpace(command) == "" {
 		return "", fmt.Errorf("empty command")
 	}
+	if err := CheckBashCommand(command); err != nil {
+		return "", err
+	}
 	return active.Run(ctx, command, timeoutSec)
 }
 
@@ -49,6 +52,11 @@ func BashExec(ctx context.Context, command string, timeoutSec int) (string, erro
 func BashExecDir(ctx context.Context, dir, command string, timeoutSec int) (string, error) {
 	if strings.TrimSpace(command) == "" {
 		return "", fmt.Errorf("empty command")
+	}
+	// Same denylist as BashExec: metamorphic/tamper commands here can be
+	// model-authored, and the deny rules are cwd-independent (/, ~, $HOME).
+	if err := CheckBashCommand(command); err != nil {
+		return "", err
 	}
 	return active.RunInDir(ctx, dir, command, timeoutSec)
 }
@@ -68,6 +76,9 @@ type StreamRunner interface {
 func BashExecStream(ctx context.Context, command string, timeoutSec int, w io.Writer) (string, error) {
 	if strings.TrimSpace(command) == "" {
 		return "", fmt.Errorf("empty command")
+	}
+	if err := CheckBashCommand(command); err != nil {
+		return "", err
 	}
 	if sr, ok := active.(StreamRunner); ok && w != nil {
 		return sr.RunStream(ctx, command, timeoutSec, w)

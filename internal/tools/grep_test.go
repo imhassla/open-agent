@@ -10,6 +10,7 @@ import (
 
 func TestGlobRecursive(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -28,6 +29,7 @@ func TestGlobRecursive(t *testing.T) {
 
 func TestGrep(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	writeFile(t, filepath.Join(dir, "a.txt"), "foo\nbar\nfoobar\n")
 
 	out, err := Grep(context.Background(), "foo", dir, 100)

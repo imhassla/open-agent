@@ -17,6 +17,9 @@ import (
 // "Recv.Method" for a method; newSrc must be a complete declaration (doc comment
 // included if wanted — the old one is replaced along with the function).
 func ReplaceGoFunc(path, name, newSrc string) (string, error) {
+	if err := ConfineWrite(path); err != nil {
+		return "", err
+	}
 	src, err := os.ReadFile(path)
 	if err != nil {
 		// Same policy as edit_file: a mutating tool never redirects to a

@@ -32,6 +32,7 @@ func TestLSPDiagnosticsGopls(t *testing.T) {
 		t.Skip("gopls not installed; skipping live LSP smoke")
 	}
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	writeFile(t, filepath.Join(dir, "go.mod"), "module p\n\ngo 1.21\n")
 	writeFile(t, filepath.Join(dir, "a.go"), "package p\n\nfunc F() int { return \"oops\" }\n")
 

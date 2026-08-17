@@ -15,6 +15,7 @@ import (
 func initRepoWith(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	repo, err := git.PlainInit(dir, false)
 	if err != nil {
 		t.Fatal(err)
@@ -238,6 +239,7 @@ func TestWorktreeBaselineDeletedTest(t *testing.T) {
 // checks to the shadow-package gate.)
 func TestGitStatusRespectsGitignore(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	repo, err := git.PlainInit(dir, false)
 	if err != nil {
 		t.Fatal(err)

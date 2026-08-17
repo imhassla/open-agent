@@ -16,6 +16,7 @@ func mustWrite(t *testing.T, path, content string) {
 
 func TestApplyPatch_MultiFile(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	a := filepath.Join(dir, "a.txt")
 	b := filepath.Join(dir, "b.txt")
 	mustWrite(t, a, "hello world\n")
@@ -40,6 +41,7 @@ func TestApplyPatch_MultiFile(t *testing.T) {
 
 func TestApplyPatch_AllOrNothing(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	a := filepath.Join(dir, "a.txt")
 	b := filepath.Join(dir, "b.txt")
 	mustWrite(t, a, "hello world\n")
@@ -59,6 +61,7 @@ func TestApplyPatch_AllOrNothing(t *testing.T) {
 
 func TestApplyPatch_SameFileChainedBlocks(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	a := filepath.Join(dir, "a.txt")
 	mustWrite(t, a, "one two three\n")
 	// Second block's search only exists AFTER the first block applied.
@@ -76,6 +79,7 @@ func TestApplyPatch_SameFileChainedBlocks(t *testing.T) {
 
 func TestApplyPatch_AmbiguousSearch(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	a := filepath.Join(dir, "a.txt")
 	mustWrite(t, a, "x x\n")
 	_, err := ApplyPatch([]PatchEdit{{Path: a, Search: "x", Replace: "y"}})
@@ -86,6 +90,7 @@ func TestApplyPatch_AmbiguousSearch(t *testing.T) {
 
 func TestApplyPatch_GoSyntaxNoteFolded(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	g := filepath.Join(dir, "x.go")
 	mustWrite(t, g, "package x\n\nfunc F() {}\n")
 	res, err := ApplyPatch([]PatchEdit{{Path: g, Search: "func F() {}", Replace: "func F() {"}})
@@ -111,6 +116,7 @@ func TestApplyPatch_EmptyAndIdentical(t *testing.T) {
 		t.Fatal("expected error on empty batch")
 	}
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	a := filepath.Join(dir, "a.txt")
 	mustWrite(t, a, "x\n")
 	if _, err := ApplyPatch([]PatchEdit{{Path: a, Search: "x", Replace: "x"}}); err == nil {
@@ -123,6 +129,7 @@ func TestApplyPatch_AliasedPathsNormalized(t *testing.T) {
 	// file — unnormalized they were planned independently against original disk
 	// content and last-write-wins silently dropped an edit.
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	a := filepath.Join(dir, "t.txt")
 	mustWrite(t, a, "alpha beta gamma\n")
 	res, err := ApplyPatch([]PatchEdit{
@@ -144,6 +151,7 @@ func TestApplyPatch_EmergentAmbiguity(t *testing.T) {
 	// Block A creates a second occurrence of block B's search — validation runs
 	// against the EVOLVING content, so B must fail (and nothing be written).
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	a := filepath.Join(dir, "a.txt")
 	mustWrite(t, a, "foo bar\n")
 	_, err := ApplyPatch([]PatchEdit{
@@ -160,6 +168,7 @@ func TestApplyPatch_EmergentAmbiguity(t *testing.T) {
 
 func TestApplyPatch_Deletion(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	a := filepath.Join(dir, "a.txt")
 	mustWrite(t, a, "keep remove keep\n")
 	if _, err := ApplyPatch([]PatchEdit{{Path: a, Search: " remove", Replace: ""}}); err != nil {
@@ -174,6 +183,7 @@ func TestApplyPatch_NetZeroChainDoesNotTouchDisk(t *testing.T) {
 	// A→B then B→A nets to zero: the file must not be rewritten (mtime bumps
 	// poke file-watchers/build systems).
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	a := filepath.Join(dir, "a.txt")
 	mustWrite(t, a, "x\n")
 	fi0, _ := os.Stat(a)
@@ -194,6 +204,7 @@ func TestApplyPatch_NetZeroChainDoesNotTouchDisk(t *testing.T) {
 
 func TestApplyPatchPreview_WritesNothing(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	a := filepath.Join(dir, "a.txt")
 	mustWrite(t, a, "hello world\n")
 	order, before, after, err := ApplyPatchPreview([]PatchEdit{{Path: a, Search: "world", Replace: "there"}})

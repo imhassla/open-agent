@@ -59,6 +59,7 @@ func TestDegenerateCheckWholeSuite(t *testing.T) {
 		t.Skip("python3 not available")
 	}
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	for _, a := range [][]string{{"init", "-q"}, {"config", "user.email", "a@b.c"}, {"config", "user.name", "t"}} {
 		if out, err := exec.Command("git", append([]string{"-C", dir}, a...)...).CombinedOutput(); err != nil {
 			t.Fatalf("git: %v %s", err, out)

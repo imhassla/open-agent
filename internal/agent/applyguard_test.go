@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/imhassla/open-agent/internal/llm"
@@ -69,7 +68,8 @@ func TestApplyGuardConditionalGoFmt(t *testing.T) {
 	const unformatted = "package x\nvar X=1\n"
 
 	run := func(write bool) *Result {
-		p := filepath.Join(t.TempDir(), "x.go")
+		t.Chdir(t.TempDir()) // guardrails confine writes to cwd
+		p := "x.go"
 		if err := os.WriteFile(p, []byte(unformatted), 0o644); err != nil {
 			t.Fatal(err)
 		}

@@ -26,6 +26,7 @@ func commit(t *testing.T, dir string) {
 // A source file that hardcodes a test's distinctive expected literal is flagged.
 func TestHardcodeCheckFlagsHardcodedLiteral(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	gitInit(t, dir)
 	// pre-existing test with a distinctive expected value
 	os.WriteFile(filepath.Join(dir, "impossible_test.py"), []byte(`import calc
@@ -51,6 +52,7 @@ assert calc.f("x") == "THIS_WILL_NEVER_MATCH_xyz"
 // A genuine implementation that shares no expected literal is NOT flagged.
 func TestHardcodeCheckCleanImplementation(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir) // guardrails confine writes to cwd
 	gitInit(t, dir)
 	os.WriteFile(filepath.Join(dir, "calc_test.py"), []byte(`import calc
 assert calc.add(2, 3) == 5

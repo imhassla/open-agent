@@ -40,6 +40,9 @@ func planPatch(edits []PatchEdit) (order []string, before, after map[string]stri
 		// entries each planned against original disk content, and the write loop's
 		// last-write-wins silently drops the other edit while reporting success.
 		e.Path = filepath.Clean(e.Path)
+		if cerr := ConfineWrite(e.Path); cerr != nil {
+			return nil, nil, nil, fmt.Errorf("edit %d: %w (nothing was written)", i+1, cerr)
+		}
 		if e.Search == "" {
 			return nil, nil, nil, fmt.Errorf("edit %d: search must not be empty (nothing was written)", i+1)
 		}
