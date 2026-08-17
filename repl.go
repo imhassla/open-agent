@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +34,9 @@ type session struct {
 	tokens  int
 	cost    float64
 	lastRun string
+
+	cpStore     *checkpointStore // shadow-git working-tree snapshots (nil until runSession inits it)
+	checkpoints []checkpoint     // per-turn snapshots, for /rewind
 }
 
 // dim wraps s with the ANSI dim sequence only when color is enabled (interactive
@@ -104,12 +108,20 @@ func runSession(deps *orchestrator.Deps, opts options, seed string, pin orchestr
 		}
 	}
 
+	// Checkpoints: a shadow-git snapshot store so /rewind can undo the code AND
+	// conversation to before any turn without touching the user's git. Best-effort
+	// — a disabled store just makes /rewind explain why.
+	sweepOldCheckpoints(14*24*time.Hour, time.Now())
+	s.cpStore = newCheckpointStore()
+	s.snapshotBaseline()
+
 	// Chrome (banner, status prompt, announce, bye) goes to STDERR so stdout carries
 	// only the answer — a piped `open-agent "<prose>"` is then a clean one-shot.
 	fmt.Fprintf(os.Stderr, "open-agent — interactive session (family: %s, router: %s)\n", deps.Family, onOff(deps.Routing))
 	fmt.Fprintln(os.Stderr, "Type a request; intent is auto-detected. /help for commands, /exit (or Ctrl-D) to quit.")
 
 	if strings.TrimSpace(seed) != "" {
+		s.checkpointTurn()
 		s.turn(seed)
 	}
 	for {
@@ -129,6 +141,7 @@ func runSession(deps *orchestrator.Deps, opts options, seed string, pin orchestr
 			}
 			continue
 		}
+		s.checkpointTurn()
 		s.turn(line)
 	}
 	fmt.Fprintf(os.Stderr, "\nbye — session used %d tokens (~$%.4f)\n", s.tokens, s.cost)
@@ -152,6 +165,112 @@ func (s *session) foldHistory(user, assistant string) {
 	// Persist after every turn so the dialog survives a restart/update and can be
 	// resumed with --continue. Best-effort: a write failure never breaks the turn.
 	_ = saveSession(s)
+}
+
+// snapshotBaseline records the pre-session working-tree state as checkpoint 0,
+// so /rewind can return even the user's uncommitted starting state.
+func (s *session) snapshotBaseline() {
+	if s.cpStore == nil || !s.cpStore.enabled {
+		return
+	}
+	if sha, err := s.cpStore.snapshot("baseline"); err == nil {
+		s.checkpoints = append(s.checkpoints, checkpoint{turn: 0, sha: sha, history: cloneHistory(s.history), tokens: s.tokens, cost: s.cost, label: "baseline"})
+	}
+}
+
+// cloneHistory copies the transcript so a checkpoint's snapshot is immune to
+// later foldHistory trimming/appends.
+func cloneHistory(h []llm.Message) []llm.Message {
+	if len(h) == 0 {
+		return nil
+	}
+	return append([]llm.Message(nil), h...)
+}
+
+// checkpointTurn snapshots the tree + transcript position BEFORE a turn runs, so
+// /rewind can undo that turn's file edits and conversation. Bounded to ~100.
+func (s *session) checkpointTurn() {
+	if s.cpStore == nil || !s.cpStore.enabled {
+		return
+	}
+	n := len(s.checkpoints)
+	sha, err := s.cpStore.snapshot(fmt.Sprintf("before turn %d", n))
+	if err != nil {
+		return
+	}
+	// NOT front-trimmed: turn number must equal the slice index so /rewind <n>
+	// maps to s.checkpoints[n]. Each entry is tiny; the shadow repo is the real
+	// storage. (A trim would desync the turn→index mapping.)
+	s.checkpoints = append(s.checkpoints, checkpoint{turn: n, sha: sha, history: cloneHistory(s.history), tokens: s.tokens, cost: s.cost, label: fmt.Sprintf("turn %d", n)})
+}
+
+// rewind handles the /rewind command: list checkpoints, or restore to one.
+// Usage: /rewind [N] [code|chat]. No N → list. N → restore both axes by default;
+// "code" restores only files, "chat" only the conversation.
+func (s *session) rewind(arg string) {
+	if s.cpStore == nil || !s.cpStore.enabled {
+		why := "checkpoints unavailable"
+		if s.cpStore != nil && s.cpStore.why != "" {
+			why = s.cpStore.why
+		}
+		fmt.Fprintln(os.Stderr, "/rewind:", why)
+		return
+	}
+	fields := strings.Fields(arg)
+	if len(fields) == 0 {
+		if len(s.checkpoints) <= 1 {
+			fmt.Println("no checkpoints yet — take a turn first")
+			return
+		}
+		fmt.Println("checkpoints (rewind to BEFORE a turn with /rewind <n>):")
+		for i := 1; i < len(s.checkpoints); i++ {
+			cp := s.checkpoints[i]
+			stat := s.cpStore.diffStatVsNow(cp.sha)
+			if stat != "" {
+				stat = " — since then: " + stat
+			}
+			fmt.Printf("  %d  before turn %d  (~$%.4f spent by then)%s\n", cp.turn, cp.turn, cp.cost, stat)
+		}
+		return
+	}
+	n, err := strconv.Atoi(fields[0])
+	if err != nil || n < 0 || n >= len(s.checkpoints) {
+		fmt.Fprintf(os.Stderr, "/rewind: no checkpoint %q (see /rewind for the list)\n", fields[0])
+		return
+	}
+	axis := "both"
+	if len(fields) > 1 {
+		axis = strings.ToLower(fields[1])
+	}
+	cp := s.checkpoints[n]
+
+	if axis == "code" || axis == "both" {
+		if err := s.cpStore.restore(cp.sha); err != nil {
+			fmt.Fprintln(os.Stderr, "/rewind: file restore failed:", err)
+			return
+		}
+	}
+	if axis == "chat" || axis == "both" {
+		// Restore the exact transcript snapshot — compaction-proof (a stored
+		// length would be wrong after foldHistory trims the oldest pairs).
+		s.history = cloneHistory(cp.history)
+		s.tokens, s.cost = cp.tokens, cp.cost
+		_ = saveSession(s)
+	}
+	// A FULL rewind discards later turns (they're undone on both axes); a
+	// single-axis rewind leaves the checkpoint list intact so the other axis can
+	// still be rewound to a later turn.
+	if axis == "both" {
+		s.checkpoints = s.checkpoints[:n+1]
+	}
+	switch axis {
+	case "code":
+		fmt.Fprintf(os.Stderr, "rewound FILES to before turn %d (conversation kept)\n", n)
+	case "chat":
+		fmt.Fprintf(os.Stderr, "rewound CONVERSATION to before turn %d (files kept)\n", n)
+	default:
+		fmt.Fprintf(os.Stderr, "rewound files + conversation to before turn %d\n", n)
+	}
 }
 
 // turn routes one user message: resolve intent (pin or classify) → converse (ask/code)
@@ -368,6 +487,8 @@ func (s *session) slash(line string) bool {
 	case "/reset":
 		s.history = nil
 		fmt.Println("(conversation history cleared)")
+	case "/rewind":
+		s.rewind(arg)
 	case "/cost":
 		fmt.Printf("session: %d tokens, ~$%.4f\n", s.tokens, s.cost)
 	case "/auto":
@@ -443,6 +564,7 @@ func printSessionHelp() {
   /model [slug]             show or set a model override
   /family [name]            show or switch the model family
   /reset                    clear conversation history
+  /rewind [n] [code|chat]   undo to before turn n — files + conversation (or one axis); no n lists checkpoints
   /cost                     session token/cost total
   /help                     this help
   /exit                     quit (Ctrl-D also works)

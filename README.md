@@ -76,6 +76,22 @@ open-agent --continue        # or: open-agent chat --continue / -c
 
 Global learning (memory, router ratings, `do` run traces) lives in `~/.open-agent/`.
 
+### Rewind (undo files + conversation)
+
+An interactive session snapshots the working tree before every turn into a **shadow git
+repo** under `~/.open-agent/checkpoints/` — it never touches your real git history, and it
+captures untracked files and shell side effects. Undo a turn's changes:
+
+```
+/rewind                 # list checkpoints
+/rewind 3               # restore files AND conversation to before turn 3
+/rewind 3 code          # restore only the files (keep the conversation)
+/rewind 3 chat          # restore only the conversation (keep the files)
+```
+
+So you can "try something risky, then rewind if it fails." Disabled automatically inside a
+home/system dir or when a nested git repo is present.
+
 ## Usage
 
 ```sh
