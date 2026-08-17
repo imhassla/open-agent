@@ -347,6 +347,22 @@ func CoreTools() *Registry {
 	})
 
 	r.Register(Tool{
+		Def: schema("todo_write",
+			"Maintain a short PLAN for a multi-step task: pass the full todo list each time (it replaces the "+
+				"previous one). Mark exactly one item in_progress as you work and flip items to done when finished. "+
+				"Use it at the start of any task that takes several steps, and update it as you go — it keeps you on "+
+				"track across a long task and lets a resumed session see what's left. Skip it for trivial one-step work.",
+			obj(props{"todos": objArr("The full ordered list of steps",
+				props{"content": str("What the step does"), "status": str("pending | in_progress | done")},
+				"content", "status")}, "todos")),
+		// Intercepted in dispatch (needs agent state); this handler is an unreachable
+		// fallback, mirroring final_answer's.
+		Handler: func(ctx context.Context, a map[string]any) (string, error) {
+			return "ok", nil
+		},
+	})
+
+	r.Register(Tool{
 		Def: schema("final_answer",
 			"Provide the final answer to the user and end the task.",
 			obj(props{"answer": str("The complete final answer")}, "answer")),
@@ -380,6 +396,19 @@ func boolean(desc string) map[string]any {
 }
 func arr(desc string) map[string]any {
 	return map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": desc}
+}
+
+// objArr is an array whose items are objects with the given property schema —
+// for structured list args (e.g. todo_write's {content,status} items).
+func objArr(desc string, itemProps props, required ...string) map[string]any {
+	if required == nil {
+		required = []string{}
+	}
+	return map[string]any{
+		"type":        "array",
+		"description": desc,
+		"items":       map[string]any{"type": "object", "properties": itemProps, "required": required},
+	}
 }
 
 // argPath reads a single-file path argument accepting the schema key plus the

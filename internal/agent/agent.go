@@ -52,9 +52,11 @@ type Agent struct {
 	repeatMu     sync.Mutex
 	repeats      map[string]repeatRec // (tool+args) → last result fingerprint (loop-wander guard)
 	streamMu     sync.Mutex           // serializes live tool-output writes (concurrent dispatch)
-	emptyNudges  int                  // empty-answer re-prompts issued this Send (bounded to 1)
-	poisonNudges int                  // poisoned-tool-call recoveries this Send (bounded to 1)
-	editsApplied int                  // successful mutating tool calls this Send (envelope observability)
+	todoMu       sync.Mutex
+	todos        []todoItem // in-task plan (todo_write); surfaced as "remaining plan" on a partial run
+	emptyNudges  int        // empty-answer re-prompts issued this Send (bounded to 1)
+	poisonNudges int        // poisoned-tool-call recoveries this Send (bounded to 1)
+	editsApplied int        // successful mutating tool calls this Send (envelope observability)
 
 	// StepsTaken counts loop iterations of the LAST Send, surviving a fatal error
 	// (a nil Result) — so telemetry records how far a dead run actually got instead
@@ -372,6 +374,16 @@ func (a *Agent) Send(ctx context.Context, userInput string) (*Result, error) {
 // salvaging the best available text so work is never silently discarded.
 func (a *Agent) partial(reason string, steps int) *Result {
 	ans, fromAssistant := a.bestPartialAnswer()
+	// Surface what's left of the in-task plan so an interrupted/budget-exhausted
+	// run tells the operator (and the next --continue turn) what remains. This is
+	// appended text, so it is NOT the streamed content — reprint is fine.
+	a.todoMu.Lock()
+	left := remainingPlan(a.todos)
+	a.todoMu.Unlock()
+	if left != "" {
+		ans = strings.TrimRight(ans, "\n") + "\n\n" + left
+		fromAssistant = false // the appended plan wasn't streamed; let the caller print
+	}
 	return &Result{
 		Answer:       ans,
 		Steps:        steps,
@@ -468,6 +480,34 @@ func (a *Agent) dispatch(ctx context.Context, tc llm.ToolCall) llm.Message {
 		if err := json.Unmarshal([]byte(s), &args); err != nil {
 			return reply(fmt.Sprintf("ERROR: could not parse arguments JSON: %v", err))
 		}
+	}
+
+	// todo_write is DISPATCH-intercepted: it mutates the worker's in-task plan, so
+	// it needs agent state the registry closure can't reach. The rendered list is
+	// returned as the tool result, so the plan lives in the conversation (survives
+	// compaction and --continue). The "tool" event already fired above; we add the
+	// "toolres" event (like every other tool) so replay shows the result / errors.
+	if tc.Function.Name == "todo_write" {
+		items, hadEntries, ok := parseTodos(args)
+		toolErr := ""
+		switch {
+		case !ok:
+			toolErr = "ERROR: todo_write needs a 'todos' array of {content, status} items (status: pending|in_progress|done)"
+		case hadEntries && len(items) == 0:
+			// A garbage call (entries all unparseable) must NOT wipe the plan.
+			toolErr = "ERROR: todo_write got no valid items — each needs a non-empty 'content'; the existing plan is unchanged"
+		}
+		if toolErr != "" {
+			a.emit(event.Event{Kind: "toolres", TaskID: a.Label, Model: a.Model, Text: "todo_write " + toolErr})
+			return reply(a.noteRepeat("todo_write", tc.Function.Arguments, toolErr))
+		}
+		a.todoMu.Lock()
+		a.todos = items
+		a.todoMu.Unlock()
+		rendered := renderTodos(items)
+		a.emit(event.Event{Kind: "toolres", TaskID: a.Label, Model: a.Model,
+			Text: fmt.Sprintf("todo_write ok %d items", len(items))})
+		return reply(a.noteRepeat("todo_write", tc.Function.Arguments, rendered))
 	}
 
 	// Prefer the streaming variant on a streaming turn so long commands (bash)
