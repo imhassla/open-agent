@@ -59,6 +59,11 @@ func (a *Agent) compact(ctx context.Context, bud *budget.Budget) error {
 		return nil
 	}
 
+	// NOTE: compaction rebuilds the middle as plain text, so any captured
+	// reasoning fields (Message.Reasoning/ReasoningDetails — the MiniMax
+	// interleaved-thinking replay, see internal/llm/reasoning.go) are dropped
+	// for the summarized turns. That is acceptable: replay matters most for the
+	// live tool-calling tail, which is kept verbatim.
 	var sb strings.Builder
 	for _, m := range middle {
 		content := m.Content
@@ -103,7 +108,26 @@ func (a *Agent) compact(ctx context.Context, bud *budget.Budget) error {
 	compacted := make([]llm.Message, 0, head+1+compactKeepRecent)
 	compacted = append(compacted, a.msgs[:head]...) // system (+ preamble, verbatim)
 	compacted = append(compacted, llm.Message{Role: "user", Content: "[Summary of earlier context]\n" + summary})
-	compacted = append(compacted, a.msgs[keepFrom:]...)
+	tail := append([]llm.Message(nil), a.msgs[keepFrom:]...)
+	// Compaction fires because context is under pressure; replayed reasoning
+	// (MiniMax interleaved thinking) can run thousands of tokens per assistant
+	// turn, so keep it ONLY on the last assistant message of the tail — the live
+	// step the lab's replay mandate is really about — and drop it from earlier
+	// tail turns to cap post-compaction context growth.
+	lastAssistant := -1
+	for i := len(tail) - 1; i >= 0; i-- {
+		if tail[i].Role == "assistant" {
+			lastAssistant = i
+			break
+		}
+	}
+	for i := range tail {
+		if i != lastAssistant {
+			tail[i].Reasoning = ""
+			tail[i].ReasoningDetails = nil
+		}
+	}
+	compacted = append(compacted, tail...)
 	a.msgs = compacted
 	return nil
 }

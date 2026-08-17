@@ -649,3 +649,72 @@ func TestSendCancelReturnsPartial(t *testing.T) {
 		t.Fatalf("expected a partial with StopReason=interrupted, got %+v", res)
 	}
 }
+
+// reasoningDoer records the full message history of each call, so a test can
+// assert what the Send loop appended between steps.
+type reasoningDoer struct {
+	mu    sync.Mutex
+	calls int
+	got   [][]llm.Message
+	fn    func(call int) (*llm.Response, error)
+}
+
+func (d *reasoningDoer) Chat(_ context.Context, msgs []llm.Message, _ llm.ChatOptions) (*llm.Response, error) {
+	d.mu.Lock()
+	cp := make([]llm.Message, len(msgs))
+	copy(cp, msgs)
+	d.got = append(d.got, cp)
+	c := d.calls
+	d.calls++
+	d.mu.Unlock()
+	return d.fn(c)
+}
+
+func (d *reasoningDoer) ChatStream(ctx context.Context, msgs []llm.Message, opt llm.ChatOptions, _ llm.StreamHandler) (*llm.Response, error) {
+	return d.Chat(ctx, msgs, opt)
+}
+
+func (d *reasoningDoer) Embed(context.Context, string, []string) ([][]float32, error) {
+	return nil, fmt.Errorf("fake doer: embeddings not supported")
+}
+
+// An assistant message carrying reasoning fields (MiniMax interleaved-thinking
+// replay, internal/llm/reasoning.go) must survive the Send-loop append into
+// history VERBATIM, so the next request can pass it back to the provider.
+func TestReasoningDetailsSurviveHistory(t *testing.T) {
+	rd := `[{"type":"reasoning.text","text":"let me think","format":"minimax-m2","index":0}]`
+	d := &reasoningDoer{fn: func(call int) (*llm.Response, error) {
+		if call == 0 {
+			return &llm.Response{Message: llm.Message{
+				Role:             "assistant",
+				Content:          "checking",
+				ToolCalls:        []llm.ToolCall{{ID: "t1", Type: "function", Function: llm.FunctionCall{Name: "noop", Arguments: "{}"}}},
+				Reasoning:        "let me think",
+				ReasoningDetails: json.RawMessage(rd),
+			}}, nil
+		}
+		return &llm.Response{Message: llm.Message{Role: "assistant", Content: "done"}}, nil
+	}}
+	a := &Agent{Client: d, Registry: NewRegistry(), MaxSteps: 4, Model: "minimax/minimax-m2.1"}
+	if _, err := a.Run(context.Background(), "do the thing"); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.got) < 2 {
+		t.Fatalf("expected at least 2 calls, got %d", len(d.got))
+	}
+	var found bool
+	for _, m := range d.got[1] {
+		if m.Role == "assistant" && len(m.ToolCalls) > 0 {
+			found = true
+			if m.Reasoning != "let me think" {
+				t.Errorf("reasoning = %q, want %q", m.Reasoning, "let me think")
+			}
+			if string(m.ReasoningDetails) != rd {
+				t.Errorf("reasoning_details not verbatim in history:\n in: %s\ngot: %s", rd, m.ReasoningDetails)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("assistant tool-call message not found in second call's history")
+	}
+}

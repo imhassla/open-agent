@@ -147,6 +147,12 @@ func BuildWorker(role Role, d *Deps, o Options) (*agent.Agent, error) {
 		maxSteps = o.MaxSteps
 	}
 
+	// Per-model adaptive layer: lab-official prompt addendum + sampling for the
+	// RESOLVED slug (the ladder may have substituted a different family's model
+	// than the route prior). The addendum is a pure constant of (slug, role), so
+	// the combined System stays byte-identical per model — cache-safe.
+	addendum, samp := adaptiveForModel(model, role)
+
 	// Telemetry hints go into a per-run Preamble (a first user turn), NOT into the
 	// system prompt — keeping the system prefix byte-stable so the provider can
 	// cache it across runs (hints vary run-to-run and would bust the cache).
@@ -204,7 +210,10 @@ func BuildWorker(role Role, d *Deps, o Options) (*agent.Agent, error) {
 		RequireApply: o.RequireApply && role == RoleCode,
 		Model:        model,
 		CompactModel: compactModel,
-		System:       rt.System,
+		System:       rt.System + addendum,
+		Temperature:  samp.Temp,
+		TopP:         samp.TopP,
+		TopK:         samp.TopK,
 		Preamble:     preamble,
 		Registry:     reg,
 		MaxSteps:     maxSteps,

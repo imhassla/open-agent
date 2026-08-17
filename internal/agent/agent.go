@@ -21,8 +21,11 @@ import (
 type Agent struct {
 	Client       llm.Doer // interface so tests/orchestrator can inject a fake or share one client
 	Model        string
-	CompactModel string // cheap model used for context compaction (family-specific; "" = default)
-	Label        string // task/run label stamped on emitted events (for observability)
+	CompactModel string  // cheap model used for context compaction (family-specific; "" = default)
+	Label        string  // task/run label stamped on emitted events (for observability)
+	Temperature  float64 // lab-recommended sampling (0 = provider default; <0 = explicit 0.0)
+	TopP         float64 // 0 = provider default
+	TopK         int     // 0 = provider default
 	System       string
 	Preamble     string // per-run context (e.g. telemetry hints) injected as the first user turn, NOT into the cached system prefix
 	Registry     *Registry
@@ -84,7 +87,12 @@ func (a *Agent) LoadHistory(prior []llm.Message) {
 
 // Spawn creates a child worker that shares this agent's client and emitter but
 // has a fresh conversation, its own model/system/registry, and streaming
-// disabled (children must not interleave on a shared writer).
+// disabled (children must not interleave on a shared writer). Sampling params
+// (Temperature/TopP/TopK) are deliberately NOT copied: they are per-model
+// lab-official values chosen by the orchestrator's adaptive layer, and this
+// package cannot recompute them for the child's model (import direction) — a
+// child gets provider defaults, the safe fallback. Production spawns go
+// through BuildWorker, which applies the adaptive layer to the child's slug.
 func (a *Agent) Spawn(model, system string, reg *Registry) *Agent {
 	return &Agent{
 		Client:       a.Client,
@@ -164,7 +172,8 @@ func (a *Agent) Send(ctx context.Context, userInput string) (*Result, error) {
 	a.editsApplied = 0
 	a.StepsTaken = 0
 
-	opts := llm.ChatOptions{Model: a.Model, Tools: a.Registry.Defs(), MaxTokens: 8192, JSONObject: a.JSONObject}
+	opts := llm.ChatOptions{Model: a.Model, Temperature: a.Temperature, TopP: a.TopP, TopK: a.TopK,
+		Tools: a.Registry.Defs(), MaxTokens: 8192, JSONObject: a.JSONObject}
 
 	bud := a.Budget
 	if bud == nil {
@@ -710,13 +719,24 @@ func (a *Agent) salvageNoSummary(r *Result) {
 // response object, not history), so the model still gets the corrective
 // parse-error reply.
 func sanitizeToolCallArgs(msg *llm.Message) {
+	repaired := false
 	for i, tc := range msg.ToolCalls {
 		raw := strings.TrimSpace(tc.Function.Arguments)
 		if raw == "" || json.Valid([]byte(raw)) {
 			continue
 		}
-		repaired, _ := json.Marshal(map[string]string{"_malformed_args": truncate(raw, 400)})
-		msg.ToolCalls[i].Function.Arguments = string(repaired)
+		fixed, _ := json.Marshal(map[string]string{"_malformed_args": truncate(raw, 400)})
+		msg.ToolCalls[i].Function.Arguments = string(fixed)
+		repaired = true
+	}
+	// A repaired message is no longer the model's verbatim output — captured
+	// reasoning paired with it would violate the provider's "sequence must match
+	// the original request" contract (signed/encrypted blocks may be validated)
+	// and could 400 every subsequent request. Dropping reasoning is the
+	// documented-safe direction.
+	if repaired {
+		msg.Reasoning = ""
+		msg.ReasoningDetails = nil
 	}
 }
 

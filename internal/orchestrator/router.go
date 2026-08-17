@@ -4,7 +4,12 @@
 // orchestrator imports agent, never the reverse).
 package orchestrator
 
-import "github.com/imhassla/open-agent/internal/llm"
+import (
+	"os"
+	"strings"
+
+	"github.com/imhassla/open-agent/internal/llm"
+)
 
 // Role names a task's character; the router maps it to a model + system prompt.
 type Role string
@@ -41,7 +46,86 @@ type Route struct {
 	Model    string
 	System   string
 	MaxSteps int // 0 = agent default
-	Temp     float64
+}
+
+// sampling is a family's lab-recommended request parameters (0 = leave provider
+// default; Temp < 0 = send an explicit 0.0, DeepSeek's official coding setting).
+type sampling struct {
+	Temp float64
+	TopP float64
+	TopK int
+}
+
+// minimaxToolDiscipline is MiniMax's lab-official prompting guidance (platform
+// prompting guide): explicit tool discipline and the long-task pacing line.
+const minimaxToolDiscipline = "\nUse tools only when they materially improve the result — do not call a tool " +
+	"for things you already know. Make independent read-only lookups in parallel; dependent steps sequential. " +
+	"On a lengthy task, complete each part thoroughly before continuing and avoid exhausting tokens before the task is complete."
+
+// adaptiveOff disables the per-family adaptive layer (addenda + sampling),
+// reverting to the byte-identical shared prompts — the A/B lever for the bench
+// matrix and an emergency kill-switch in the field.
+var adaptiveOff = os.Getenv("OPEN_AGENT_ADAPTIVE") == "0"
+
+// adaptiveForModel returns the lab-official prompt addendum and sampling
+// overrides for the RESOLVED model slug + role. Keyed by slug — not by Family —
+// because family route tables contain deliberate cross-family picks (kimi's
+// plan role routes to minimax) and the rating ladder can substitute a model
+// from another family at pick time; the lab whose guidance applies is the lab
+// that made the model actually being called. The addendum must stay a PURE
+// constant of (slug, role) — the combined System is the provider-cached prefix
+// and must be byte-identical per model across runs. Every entry is sourced from
+// the lab's OWN published docs (model cards / API docs / platform guides):
+//
+//   - Qwen3-Coder/non-thinking card: temp 0.7, top_p 0.8, top_k 20; never greedy.
+//   - Z.ai GLM docs: temp 1.0; their docs say set only ONE of temperature/top_p.
+//   - MiniMax-M2 README: temp 1.0, top_p 0.95, top_k 40 (never "cooled down");
+//     platform guide adds the tool-discipline + long-task pacing lines.
+//   - DeepSeek API parameter table: coding 0.0 (explicit greedy — the <0
+//     sentinel); non-coding recommendations are ~1.0+, so only code overrides.
+//   - Moonshot K2 cards: temp 0.6 for Instruct; 1.0 for the Thinking variant.
+//   - Mistral Devstral cards: temp 0.15 in every official example.
+//   - xAI grok-code guide: reasoning model — send NO sampling overrides.
+//   - Google: Gemini 2.5 function-calling favors low temp for deterministic
+//     args (code only); Gemini 3 docs FORBID overriding sampling — no entry.
+func adaptiveForModel(model string, role Role) (addendum string, p sampling) {
+	if adaptiveOff {
+		return "", sampling{}
+	}
+	switch provider := strings.SplitN(model, "/", 2)[0]; provider {
+	case "qwen":
+		if strings.Contains(model, "thinking") {
+			// Qwen3 thinking-mode card: 0.6 / top_p 0.95 (and never greedy) —
+			// distinct from the non-thinking/Coder card below.
+			p = sampling{Temp: 0.6, TopP: 0.95, TopK: 20}
+		} else {
+			p = sampling{Temp: 0.7, TopP: 0.8, TopK: 20}
+		}
+	case "z-ai":
+		p = sampling{Temp: 1.0}
+	case "minimax":
+		p = sampling{Temp: 1.0, TopP: 0.95, TopK: 40}
+		if role == RoleCode {
+			addendum = minimaxToolDiscipline
+		}
+	case "deepseek":
+		if role == RoleCode {
+			p = sampling{Temp: -1} // their own table: coding = 0.0
+		}
+	case "moonshotai":
+		if strings.Contains(model, "thinking") {
+			p = sampling{Temp: 1.0}
+		} else {
+			p = sampling{Temp: 0.6}
+		}
+	case "mistralai":
+		p = sampling{Temp: 0.15}
+	case "google":
+		if role == RoleCode && strings.Contains(model, "gemini-2.5") {
+			p = sampling{Temp: 0.2}
+		}
+	}
+	return addendum, p
 }
 
 // roleSystem holds the family-independent system prompt for each role.
@@ -139,6 +223,9 @@ func RoutesFor(f Family) map[Role]Route {
 	}
 	out := make(map[Role]Route, len(roleSystem))
 	for role, sys := range roleSystem {
+		// Adaptive prompt/sampling adjustments are NOT baked in here: the route's
+		// model is only a prior (the ladder may substitute at pick time), so
+		// BuildWorker applies adaptiveForModel to the RESOLVED slug instead.
 		out[role] = Route{Model: models[role], System: sys}
 	}
 	return out

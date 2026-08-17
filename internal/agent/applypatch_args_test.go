@@ -2,6 +2,8 @@ package agent
 
 import (
 	"testing"
+
+	"github.com/imhassla/open-agent/internal/llm"
 )
 
 func TestParsePatchEdits(t *testing.T) {
@@ -38,5 +40,32 @@ func TestParsePatchEdits(t *testing.T) {
 	}
 	if _, err := parsePatchEdits(map[string]any{"edits": []any{"not-an-object"}}); err == nil {
 		t.Fatal("expected error on non-object item")
+	}
+}
+
+func TestSanitizeToolCallArgsDropsReasoning(t *testing.T) {
+	// A repaired (non-verbatim) assistant message must NOT keep captured
+	// reasoning: providers may validate that replayed blocks match the original
+	// output, and a stale pairing can 400 every subsequent request.
+	msg := &llm.Message{
+		Role:             "assistant",
+		Reasoning:        "thinking...",
+		ReasoningDetails: []byte(`[{"type":"reasoning.text","text":"t"}]`),
+		ToolCalls:        []llm.ToolCall{{Function: llm.FunctionCall{Name: "bash", Arguments: `{"cmd": "ls`}}},
+	}
+	sanitizeToolCallArgs(msg)
+	if msg.Reasoning != "" || msg.ReasoningDetails != nil {
+		t.Fatalf("repaired message kept reasoning: %q %s", msg.Reasoning, msg.ReasoningDetails)
+	}
+	// An untouched (valid) message keeps its reasoning.
+	ok := &llm.Message{
+		Role:             "assistant",
+		Reasoning:        "thinking...",
+		ReasoningDetails: []byte(`[{"type":"reasoning.text","text":"t"}]`),
+		ToolCalls:        []llm.ToolCall{{Function: llm.FunctionCall{Name: "bash", Arguments: `{"cmd":"ls"}`}}},
+	}
+	sanitizeToolCallArgs(ok)
+	if ok.Reasoning == "" || ok.ReasoningDetails == nil {
+		t.Fatal("valid message must keep reasoning")
 	}
 }

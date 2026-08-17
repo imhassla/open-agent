@@ -76,6 +76,14 @@ type Message struct {
 	ToolCallID  string       `json:"tool_call_id,omitempty"`
 	Name        string       `json:"name,omitempty"`
 	Annotations []Annotation `json:"annotations,omitempty"` // web-search citations (Sonar / :online)
+	// Interleaved-thinking passthrough (see reasoning.go): OpenRouter returns the
+	// model's thinking as `reasoning` (plaintext) and `reasoning_details` (ordered
+	// typed blocks). ReasoningDetails is kept as raw bytes so the non-streaming
+	// capture is byte-verbatim — the docs forbid rearranging or modifying the
+	// block sequence when passing it back. body() sends these fields only to
+	// models whose lab mandates replay (minimax/…) and strips them otherwise.
+	Reasoning        string          `json:"reasoning,omitempty"`
+	ReasoningDetails json.RawMessage `json:"reasoning_details,omitempty"`
 }
 
 // Annotation is a web-search source citation returned by grounded models.
@@ -150,7 +158,9 @@ func (r *Response) Citations() []Citation {
 
 type ChatOptions struct {
 	Model       string
-	Temperature float64
+	Temperature float64 // 0 = provider default; NEGATIVE = send an explicit 0.0 (greedy — DeepSeek's official coding setting)
+	TopP        float64 // 0 = provider default
+	TopK        int     // 0 = provider default
 	MaxTokens   int
 	Tools       []Tool
 	// JSONObject requests a structured JSON response (OpenRouter response_format).
@@ -165,6 +175,13 @@ func (c *Client) body(msgs []Message, opt ChatOptions, stream bool) ([]byte, err
 	if opt.MaxTokens == 0 {
 		opt.MaxTokens = 4096
 	}
+	// Reasoning replay is per-model (reasoning.go): MiniMax mandates sending prior
+	// thinking back verbatim; Qwen mandates the opposite; others may 400 on the
+	// unknown field. stripReasoning copies before zeroing, so the caller's history
+	// keeps the captured thinking for when a replay model IS called with it.
+	if !replayReasoningFor(opt.Model) {
+		msgs = stripReasoning(msgs)
+	}
 	m := map[string]any{
 		"model":      opt.Model,
 		"messages":   msgs,
@@ -177,6 +194,14 @@ func (c *Client) body(msgs []Message, opt ChatOptions, stream bool) ([]byte, err
 	}
 	if opt.Temperature > 0 {
 		m["temperature"] = opt.Temperature
+	} else if opt.Temperature < 0 {
+		m["temperature"] = 0.0 // explicit greedy (e.g. DeepSeek's official coding recommendation)
+	}
+	if opt.TopP > 0 {
+		m["top_p"] = opt.TopP
+	}
+	if opt.TopK > 0 {
+		m["top_k"] = opt.TopK
 	}
 	if opt.JSONObject {
 		m["response_format"] = map[string]any{"type": "json_object"}
@@ -310,6 +335,12 @@ func (c *Client) doChat(ctx context.Context, body []byte, model string) (*Respon
 	if cr.Model == "" {
 		cr.Model = model // fall back to the requested slug (streaming path does the same)
 	}
+	if reasoningReplayDisabled() {
+		// Kill-switch also stops CAPTURE, so no reasoning bytes enter history or
+		// session files while the feature is neutralized.
+		cr.Choices[0].Message.Reasoning = ""
+		cr.Choices[0].Message.ReasoningDetails = nil
+	}
 	return &Response{
 		Message:      cr.Choices[0].Message,
 		FinishReason: cr.Choices[0].FinishReason,
@@ -321,8 +352,13 @@ func (c *Client) doChat(ctx context.Context, body []byte, model string) (*Respon
 type streamChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content   string `json:"content"`
-			ToolCalls []struct {
+			Content string `json:"content"`
+			// Interleaved-thinking deltas: `reasoning` text chunks concatenate;
+			// `reasoning_details` elements accumulate via reasoningAcc (merge by
+			// block index, arrival order preserved — see reasoning.go).
+			Reasoning        string            `json:"reasoning"`
+			ReasoningDetails []json.RawMessage `json:"reasoning_details"`
+			ToolCalls        []struct {
 				Index    int    `json:"index"`
 				ID       string `json:"id"`
 				Type     string `json:"type"`
@@ -409,6 +445,8 @@ func (c *Client) ChatStream(ctx context.Context, msgs []Message, opt ChatOptions
 
 	var content strings.Builder
 	toolAcc := map[int]*ToolCall{}
+	var rAcc reasoningAcc
+	captureReasoning := !reasoningReplayDisabled() // kill-switch stops capture too
 	var usage Usage
 	var finish string
 	model := opt.Model // actual model from server (may differ from request due to routing)
@@ -451,6 +489,14 @@ func (c *Client) ChatStream(ctx context.Context, msgs []Message, opt ChatOptions
 				onText(ch.Delta.Content)
 			}
 		}
+		if captureReasoning {
+			if ch.Delta.Reasoning != "" {
+				rAcc.addText(ch.Delta.Reasoning)
+			}
+			for _, rd := range ch.Delta.ReasoningDetails {
+				rAcc.add(rd)
+			}
+		}
 		for _, tc := range ch.Delta.ToolCalls {
 			acc, ok := toolAcc[tc.Index]
 			if !ok {
@@ -484,6 +530,9 @@ func (c *Client) ChatStream(ctx context.Context, msgs []Message, opt ChatOptions
 		FinishReason: finish,
 		Usage:        usage,
 		Model:        model,
+	}
+	if captureReasoning {
+		rAcc.apply(&resp2.Message)
 	}
 
 	// On a mid-stream read error, return what was assembled so far alongside the
