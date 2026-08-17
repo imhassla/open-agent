@@ -31,8 +31,8 @@ func (a *Agent) postEditVerify(name string, tool Tool, args map[string]any) stri
 		return "" // not a mutating call
 	}
 	switch name {
-	case "go_replace_func", "go_fmt":
-		return "" // already parse-validated by the tool itself
+	case "go_replace_func", "go_fmt", "apply_patch":
+		return "" // already parse-validated by the tool itself (apply_patch folds its own [verify:] notes)
 	}
 	path := argPath(args, "path", "file", "filename", "filepath")
 	if !strings.HasSuffix(path, ".go") {

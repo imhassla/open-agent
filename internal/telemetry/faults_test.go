@@ -35,3 +35,20 @@ func TestFaultClassAndProfile(t *testing.T) {
 		t.Fatalf("summary = %q", s)
 	}
 }
+
+func TestFaultClassEditMiss(t *testing.T) {
+	cases := map[string]string{
+		"ERROR: old_string not found in a/b.go":                                                         FaultEditMiss,
+		"ERROR: edit 2: search text not found in a/b.go (nothing was written — copy the text verbatim)": FaultEditMiss,
+		"ERROR: old_string occurs 3 times in a/b.go; add surrounding context":                           FaultEditMiss,
+		"ERROR: edit 1: search text occurs 2 times in a/b.go; add surrounding context":                  FaultEditMiss,
+		// ENOENT stays path_miss — the anchor class is misses INSIDE an existing file.
+		"ERROR: open x/y.go: no such file or directory": FaultPathMiss,
+		"ERROR: file a/b.go does not exist":             FaultPathMiss,
+	}
+	for in, want := range cases {
+		if got := FaultClass(in); got != want {
+			t.Errorf("FaultClass(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

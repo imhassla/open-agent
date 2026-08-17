@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 
@@ -118,6 +120,28 @@ func CoreTools() *Registry {
 			}, "path", "old_string", "new_string")),
 		Handler: func(ctx context.Context, a map[string]any) (string, error) {
 			return tools.EditFile(argPath(a, "path", "file", "filename", "filepath"), argStr(a, "old_string"), argStr(a, "new_string"), argBool(a, "replace_all"))
+		},
+	})
+
+	r.Register(Tool{
+		Applies: true,
+		Def: schema("apply_patch",
+			"Apply a BATCH of small search/replace edits — possibly across several files — in one call. "+
+				"Each edit replaces 'search' (copied VERBATIM from the file, must be unique in it) with "+
+				"'replace'. Every edit is validated before ANY file is written (all-or-nothing), so a "+
+				"failed batch never half-applies. Prefer this over several edit_file calls for related "+
+				"small changes; keep each search block a few lines.",
+			obj(props{"edits": objArr("The edits, applied in order (blocks may target the same file)", props{
+				"path":    str("File to edit"),
+				"search":  str("Exact existing text to replace (verbatim, unique in the file)"),
+				"replace": str("Replacement text"),
+			}, "path", "search", "replace")}, "edits")),
+		Handler: func(ctx context.Context, a map[string]any) (string, error) {
+			edits, err := parsePatchEdits(a)
+			if err != nil {
+				return "", err
+			}
+			return tools.ApplyPatch(edits)
 		},
 	})
 
@@ -409,6 +433,46 @@ func objArr(desc string, itemProps props, required ...string) map[string]any {
 		"description": desc,
 		"items":       map[string]any{"type": "object", "properties": itemProps, "required": required},
 	}
+}
+
+// parsePatchEdits reads apply_patch's edits array, tolerating the aliases models
+// substitute (old_string/new_string from edit_file muscle memory, file for path)
+// — a wrong key otherwise becomes an empty field and a wasted round-trip.
+func parsePatchEdits(a map[string]any) ([]tools.PatchEdit, error) {
+	raw, ok := a["edits"].([]any)
+	if !ok {
+		// Cheap models sometimes emit the array as a JSON STRING — recover it
+		// instead of burning a round-trip on a generic error.
+		if s, isStr := a["edits"].(string); isStr {
+			var arr []any
+			if json.Unmarshal([]byte(s), &arr) == nil {
+				raw, ok = arr, true
+			}
+		}
+	}
+	if !ok || len(raw) == 0 {
+		return nil, fmt.Errorf("apply_patch needs an 'edits' array of {path, search, replace} items")
+	}
+	edits := make([]tools.PatchEdit, 0, len(raw))
+	for i, it := range raw {
+		m, ok := it.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("edit %d is not an object; each item needs {path, search, replace}", i+1)
+		}
+		e := tools.PatchEdit{
+			Path:    argPath(m, "path", "file", "filename", "filepath"),
+			Search:  argStr(m, "search"),
+			Replace: argStr(m, "replace"),
+		}
+		if e.Search == "" {
+			e.Search = argStr(m, "old_string")
+		}
+		if e.Replace == "" {
+			e.Replace = argStr(m, "new_string")
+		}
+		edits = append(edits, e)
+	}
+	return edits, nil
 }
 
 // argPath reads a single-file path argument accepting the schema key plus the

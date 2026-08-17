@@ -16,6 +16,7 @@ const (
 	FaultPathMiss      = "path_miss"      // ENOENT / invented paths
 	FaultShadowPkg     = "shadow_package" // same-named subpackage attempt
 	FaultOversized     = "oversized_call" // provider rejected an oversized/poisoned call
+	FaultEditMiss      = "edit_miss"      // edit anchor not found / ambiguous (edit_file, apply_patch)
 )
 
 // FaultClass buckets one tool-error string ("" = no recognized class).
@@ -32,6 +33,11 @@ func FaultClass(errText string) string {
 		return FaultShadowPkg
 	case strings.Contains(e, "invalid tool call") || strings.Contains(e, "too large") || strings.Contains(e, "invalid request error"):
 		return FaultOversized
+	// After path_miss so an ENOENT ("does not exist") never lands here: this class
+	// is the anchor text being wrong INSIDE an existing file — edit_file's
+	// "old_string not found"/"occurs N times" and apply_patch's identical wording.
+	case strings.Contains(e, "not found in") || (strings.Contains(e, "occurs") && strings.Contains(e, "times in")):
+		return FaultEditMiss
 	}
 	return ""
 }
@@ -72,6 +78,7 @@ var faultHintText = map[string]string{
 	FaultPathMiss:      "Recent runs with this model used non-existent file paths — paths are relative to the working directory; verify with glob/ls before reading.",
 	FaultShadowPkg:     "Recent runs with this model created same-named subpackages — add code to the EXISTING package directory.",
 	FaultOversized:     "Recent runs with this model sent oversized tool calls — build large files in parts (≤150 lines per call).",
+	FaultEditMiss:      "Recent runs with this model missed edit anchors (old_string/search not found or ambiguous) — copy the existing text VERBATIM from a fresh read_file and include enough surrounding lines to make it unique.",
 }
 
 // FaultHints returns preamble hints targeted at ONE model's recent fault

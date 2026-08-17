@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/imhassla/open-agent/internal/tools"
@@ -25,7 +27,7 @@ func GateEdits(reg *Registry, approve ApproveFunc) {
 		return
 	}
 	var mu sync.Mutex
-	for _, name := range []string{"write_file", "edit_file", "go_fmt"} {
+	for _, name := range []string{"write_file", "edit_file", "go_fmt", "apply_patch"} {
 		t, ok := reg.Get(name)
 		if !ok {
 			continue
@@ -34,6 +36,21 @@ func GateEdits(reg *Registry, approve ApproveFunc) {
 		t.Handler = func(ctx context.Context, args map[string]any) (string, error) {
 			mu.Lock()
 			defer mu.Unlock()
+			if nm == "apply_patch" {
+				// Multi-file: preview EVERY touched file as one concatenated diff so
+				// the user approves the whole batch (matching its all-or-nothing apply).
+				path, diff, err := previewPatch(args)
+				if err != nil {
+					return "", err
+				}
+				if diff == "" {
+					return orig(ctx, args) // nothing would change → apply silently, no prompt
+				}
+				if approve(path, diff) {
+					return orig(ctx, args)
+				}
+				return rejectMsg(path), nil
+			}
 			path, before, after, isNew, err := previewEdit(nm, args)
 			if err != nil {
 				return "", err // surfaced as "ERROR: ..." by dispatch; no prompt
@@ -48,6 +65,33 @@ func GateEdits(reg *Registry, approve ApproveFunc) {
 		}
 		reg.Register(t) // overwrites by name; order unchanged → tool-schema prefix stable
 	}
+}
+
+// previewPatch renders an apply_patch call as one concatenated unified diff over
+// every touched file, with the SAME validation/errors as the apply path. The
+// returned "path" is a summary label for the approve prompt.
+func previewPatch(args map[string]any) (path, diff string, err error) {
+	edits, err := parsePatchEdits(args)
+	if err != nil {
+		return "", "", err
+	}
+	order, before, after, err := tools.ApplyPatchPreview(edits)
+	if err != nil {
+		return "", "", err
+	}
+	var sb strings.Builder
+	for _, p := range order {
+		if before[p] == after[p] {
+			continue
+		}
+		sb.WriteString(tools.UnifiedDiff(p, before[p], after[p], false))
+		sb.WriteString("\n")
+	}
+	label := strings.Join(order, ", ")
+	if len(order) > 3 {
+		label = fmt.Sprintf("%s, … (%d files)", strings.Join(order[:3], ", "), len(order))
+	}
+	return label, strings.TrimRight(sb.String(), "\n"), nil
 }
 
 func previewEdit(name string, args map[string]any) (path, before, after string, isNew bool, err error) {

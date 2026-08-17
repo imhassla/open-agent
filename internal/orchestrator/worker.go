@@ -72,8 +72,10 @@ func RegistryFor(role Role, d *Deps, bud *budget.Budget) *agent.Registry {
 	// OpenRouter (Sonar) search — far more relevant, and every source is returned.
 	agent.RegisterWebSearch(reg, d.Client, d.Search)
 	if role == RoleResearch {
-		// Read-only: research investigates and synthesizes, it must not mutate the tree.
-		reg.Remove("write_file", "edit_file")
+		// Read-only: research investigates and synthesizes, it must not mutate the
+		// tree. Remove EVERY mutating tool — go_replace_func and go_fmt (write=true)
+		// and apply_patch mutate just like write_file/edit_file.
+		reg.Remove("write_file", "edit_file", "apply_patch", "go_replace_func", "go_fmt")
 	}
 	if d.Mem != nil {
 		agent.RegisterMemory(reg, d.Mem)
