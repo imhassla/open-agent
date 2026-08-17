@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imhassla/open-agent/internal/agent"
 	"github.com/imhassla/open-agent/internal/llm"
 	"github.com/imhassla/open-agent/internal/orchestrator"
 	"github.com/imhassla/open-agent/internal/telemetry"
@@ -148,23 +149,109 @@ func runSession(deps *orchestrator.Deps, opts options, seed string, pin orchestr
 }
 
 // foldHistory appends a turn's exchange and bounds the transcript: when it exceeds a
-// character budget the oldest pairs are dropped (keeping the most recent context), so
-// the full history isn't re-sent (and re-billed) to every ephemeral worker as the
-// session grows. (A richer cheap-model summary-fold is a documented follow-up.)
+// character budget the oldest exchanges are SUMMARIZED into a compact leading note
+// (compactHistory) rather than dropped, so a long dialog keeps its early context while
+// the full history isn't re-sent (and re-billed) to every ephemeral worker.
+const historyBudget = 48000 // ~12k tokens of transcript; well under any model's window
+
 func (s *session) foldHistory(user, assistant string) {
 	s.history = append(s.history, llm.Message{Role: "user", Content: user}, llm.Message{Role: "assistant", Content: assistant})
-	const budget = 48000 // ~12k tokens of transcript; well under any model's window
-	total := 0
-	for _, m := range s.history {
-		total += len(m.Content)
-	}
-	for total > budget && len(s.history) > 2 {
-		total -= len(s.history[0].Content) + len(s.history[1].Content)
-		s.history = s.history[2:] // drop the oldest user/assistant pair
+	if historyChars(s.history) > historyBudget {
+		s.compactHistory()
 	}
 	// Persist after every turn so the dialog survives a restart/update and can be
 	// resumed with --continue. Best-effort: a write failure never breaks the turn.
 	_ = saveSession(s)
+}
+
+func historyChars(h []llm.Message) int {
+	n := 0
+	for _, m := range h {
+		n += len(m.Content)
+	}
+	return n
+}
+
+// compactHistory keeps the most recent exchanges and SUMMARIZES the older prefix
+// into a single leading note (chaining any prior summary), so a long dialog
+// keeps its early context instead of dropping it. Best-effort: if the cheap
+// summarizer fails or returns nothing, it falls back to the old drop behavior so
+// a turn never wedges on a failing model.
+func (s *session) compactHistory() {
+	// A single pair can't be summarized usefully — bound it with the drop loop.
+	if len(s.history) <= 2 {
+		s.dropOldestToBudget()
+		return
+	}
+	// Summarize everything before a recent tail; ALWAYS leave ≥1 message to
+	// summarize (head) even when the whole history is only a few big messages.
+	tailN := 6
+	if tailN > len(s.history)-1 {
+		tailN = len(s.history) - 1
+	}
+	head := s.history[:len(s.history)-tailN]
+	tail := append([]llm.Message(nil), s.history[len(s.history)-tailN:]...)
+
+	summary, tokens, cost, err := s.summarize(head)
+	// The API call happened regardless of the result — charge it always.
+	s.tokens += tokens
+	s.cost += cost
+	if err != nil || strings.TrimSpace(summary) == "" {
+		s.dropOldestToBudget() // best-effort fallback: never wedge on a bad model
+		return
+	}
+	rebuilt := make([]llm.Message, 0, len(tail)+1)
+	rebuilt = append(rebuilt, llm.Message{Role: "user", Content: "[Summary of earlier conversation]\n" + summary})
+	rebuilt = append(rebuilt, tail...)
+	// GUARANTEE under budget (the summary bounds at ~2048 tokens, so dropping the
+	// oldest tail messages — keeping the summary — always converges).
+	for historyChars(rebuilt) > historyBudget && len(rebuilt) > 2 {
+		rebuilt = append(rebuilt[:1], rebuilt[2:]...) // drop the oldest tail message
+	}
+	s.history = rebuilt
+}
+
+// dropOldestToBudget trims oldest pairs until under budget — the pre-summarization
+// behavior, used as the never-wedge fallback and for un-summarizable histories.
+func (s *session) dropOldestToBudget() {
+	total := historyChars(s.history)
+	for total > historyBudget && len(s.history) > 2 {
+		total -= len(s.history[0].Content) + len(s.history[1].Content)
+		s.history = s.history[2:]
+	}
+}
+
+// summarize compresses the given messages into a dense note via the cheap model
+// (a one-shot, tool-free call — the session transcript is plain text pairs). A
+// fresh bounded context is used so a per-turn Ctrl-C doesn't kill the summary.
+// Returns the summary plus the (tokens, cost) spent — cost falls back to the
+// per-token estimate when the provider omits it, so summary spend is never $0.
+func (s *session) summarize(msgs []llm.Message) (summary string, tokens int, cost float64, err error) {
+	if len(msgs) == 0 {
+		return "", 0, 0, nil
+	}
+	var sb strings.Builder
+	for _, m := range msgs {
+		if strings.TrimSpace(m.Content) == "" {
+			continue
+		}
+		fmt.Fprintf(&sb, "%s: %s\n", m.Role, m.Content)
+	}
+	model := s.deps.CheapModel()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	resp, err := s.deps.Client.Chat(ctx, []llm.Message{
+		{Role: "system", Content: agent.SummarizeSystemPrompt},
+		{Role: "user", Content: sb.String()},
+	}, llm.ChatOptions{Model: model, MaxTokens: 2048})
+	if err != nil {
+		return "", 0, 0, err
+	}
+	c := resp.Usage.Cost
+	if c == 0 {
+		c = llm.CostUSD(model, resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
+	}
+	return strings.TrimSpace(resp.Message.Content), resp.Usage.TotalTokens, c, nil
 }
 
 // snapshotBaseline records the pre-session working-tree state as checkpoint 0,

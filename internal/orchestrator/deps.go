@@ -285,6 +285,17 @@ func (d *Deps) route(role Role) (Route, bool) {
 	return r, ok
 }
 
+// CheapModel returns the family's cheap/bulk model slug (for tool-free one-shot
+// calls like intent classification or session summarization), falling back to
+// the global cheap default. Exported so package main can reach it without the
+// unexported route().
+func (d *Deps) CheapModel() string {
+	if r, ok := d.route(RoleCheap); ok && r.Model != "" {
+		return r.Model
+	}
+	return llm.ModelCheap
+}
+
 // crossFamilyJudgeModel returns the judge model of a DIFFERENT family than the
 // active one, so a code candidate is never judged by its own family (avoids
 // self-grading bias). Falls back to the active family's judge model.

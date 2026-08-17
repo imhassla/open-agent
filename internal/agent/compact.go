@@ -12,6 +12,13 @@ import (
 // compactKeepRecent is how many trailing messages to preserve verbatim.
 const compactKeepRecent = 6
 
+// SummarizeSystemPrompt is the shared instruction for compressing a transcript
+// into a dense note — used by the agent-loop compaction and the interactive
+// session's summary-fold so both worded identically.
+const SummarizeSystemPrompt = "Summarize the following agent transcript into a compact, " +
+	"information-dense note that preserves all decisions, facts discovered, file paths, commands " +
+	"run and their outcomes, and any open threads. Be concise but lossless on load-bearing detail."
+
 // compactModel is the cheap model used to summarize (family-specific when set).
 func (a *Agent) compactModel() string {
 	if a.CompactModel != "" {
@@ -69,9 +76,7 @@ func (a *Agent) compact(ctx context.Context, bud *budget.Budget) error {
 	}
 
 	resp, err := a.Client.Chat(ctx, []llm.Message{
-		{Role: "system", Content: "Summarize the following agent transcript into a compact, " +
-			"information-dense note that preserves all decisions, facts discovered, file paths, commands " +
-			"run and their outcomes, and any open threads. Be concise but lossless on load-bearing detail."},
+		{Role: "system", Content: SummarizeSystemPrompt},
 		{Role: "user", Content: sb.String()},
 	}, llm.ChatOptions{Model: a.compactModel(), MaxTokens: 2048})
 	if err != nil {
