@@ -6,7 +6,7 @@ func TestExtractJSON(t *testing.T) {
 	cases := map[string]string{
 		"```json\n[{\"file\":\"a\"}]\n```": `[{"file":"a"}]`,
 		"here you go: [{\"x\":1}] done":    `[{"x":1}]`,
-		`{"confirmed":true,"reason":"x"}`:   `{"confirmed":true,"reason":"x"}`,
+		`{"confirmed":true,"reason":"x"}`:  `{"confirmed":true,"reason":"x"}`,
 		"prefix {\"a\":1} suffix":          `{"a":1}`,
 	}
 	for in, want := range cases {

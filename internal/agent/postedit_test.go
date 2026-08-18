@@ -78,6 +78,27 @@ func TestPostEditVerify_SelfValidatingToolsSkipped(t *testing.T) {
 	}
 }
 
+func TestPostEditVerify_PythonSyntax(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	p := "bad.py"
+	if err := os.WriteFile(p, []byte("def f(:\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := &Agent{RequireApply: true}
+	note := a.postEditVerify("write_file", mutatingTool(), map[string]any{"path": p})
+	// Best-effort: with python3 installed the note fires; without, it's silent.
+	if note != "" && !strings.Contains(note, "syntax error") {
+		t.Fatalf("unexpected note shape: %q", note)
+	}
+	if err := os.WriteFile("ok.py", []byte("x = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if note := a.postEditVerify("write_file", mutatingTool(), map[string]any{"path": "ok.py"}); note != "" {
+		t.Fatalf("valid python must be silent, got %q", note)
+	}
+}
+
 func TestPostEditVerify_NonGoFileSkipped(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "notes.md")

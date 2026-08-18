@@ -37,6 +37,21 @@ func overlayDeps(srcRoot, destDir string) {
 	}
 }
 
+// MaterializeHEADCheckout builds an isolated checkout of the committed HEAD tree
+// in a fresh temp dir — WITHOUT the dependency-symlink overlay. Exported for
+// best-of-N candidate trees, which hand the tree to an arbitrary LLM worker with
+// a bash tool: a symlinked node_modules/vendor/.venv would let any candidate
+// (including the losers) write straight through into the user's REAL dep dirs
+// (npm install, rm -rf node_modules/ …) — invisible in the diff, violating the
+// "only the winning diff lands on your tree" guarantee. Candidates therefore
+// start without untracked dep dirs (tracked vendor/ still materializes from
+// HEAD); a worker that needs them installs fresh inside its own tree. The
+// returned dir is NOT a git repository — callers that need diffs must `git init`
+// and commit a baseline themselves. cleanup must always run.
+func MaterializeHEADCheckout(root string) (dir string, cleanup func(), ok bool) {
+	return materialize(root, nil, false)
+}
+
 // materializeWithChanges builds an isolated checkout in a fresh temp dir: the
 // committed HEAD tree, plus the gitignored dependency overlay, plus the live
 // working-tree version of every changed file EXCEPT those for which restoreToHEAD
@@ -45,6 +60,10 @@ func overlayDeps(srcRoot, destDir string) {
 // against the ORIGINAL tests by restoring *_test.go to HEAD). Returns the dir, a
 // cleanup func, and ok=false if it couldn't be built (not a repo / no HEAD).
 func materializeWithChanges(root string, restoreToHEAD func(path string) bool) (dir string, cleanup func(), ok bool) {
+	return materialize(root, restoreToHEAD, true)
+}
+
+func materialize(root string, restoreToHEAD func(path string) bool, overlay bool) (dir string, cleanup func(), ok bool) {
 	repo, err := openRepo(root)
 	if err != nil {
 		return "", func() {}, false
@@ -67,7 +86,9 @@ func materializeWithChanges(root string, restoreToHEAD func(path string) bool) (
 		cleanup()
 		return "", func() {}, false
 	}
-	overlayDeps(wtRoot, d)
+	if overlay {
+		overlayDeps(wtRoot, d)
+	}
 
 	for path, s := range st {
 		if s.Worktree == git.Unmodified && s.Staging == git.Unmodified {

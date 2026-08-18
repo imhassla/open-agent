@@ -35,19 +35,36 @@ func (a *Agent) postEditVerify(name string, tool Tool, args map[string]any) stri
 		return "" // already parse-validated by the tool itself (apply_patch folds its own [verify:] notes)
 	}
 	path := argPath(args, "path", "file", "filename", "filepath")
-	if !strings.HasSuffix(path, ".go") {
-		return "" // no in-process checker for non-Go files yet
-	}
-
-	if err := tools.CheckGoSyntax(path); err != nil {
-		// CheckGoSyntax errors on a readable-but-unparseable file; a read error
-		// (file removed/unreadable) is indistinguishable here and equally
-		// best-effort — either way the worker is told the file isn't valid Go.
-		// Worded without "this edit" attribution: under concurrent same-step
-		// writes the on-disk state may not be solely this call's doing.
-		return "\n[verify: " + path + " is not valid Go after this step — " +
-			truncate(strings.ReplaceAll(err.Error(), "\n", " "), 200) +
-			" — fix it before moving on]"
+	switch {
+	case strings.HasSuffix(path, ".go"):
+		if err := tools.CheckGoSyntax(path); err != nil {
+			// CheckGoSyntax errors on a readable-but-unparseable file; a read error
+			// (file removed/unreadable) is indistinguishable here and equally
+			// best-effort — either way the worker is told the file isn't valid Go.
+			// Worded without "this edit" attribution: under concurrent same-step
+			// writes the on-disk state may not be solely this call's doing.
+			return "\n[verify: " + path + " is not valid Go after this step — " +
+				truncate(strings.ReplaceAll(err.Error(), "\n", " "), 200) +
+				" — fix it before moving on]"
+		}
+	case hasAnySuffix(path, ".py", ".js", ".mjs", ".cjs"):
+		// Subprocess parse check (py_compile / node --check) — same best-effort
+		// contract: a missing interpreter or infra failure is silent; only a
+		// real syntax diagnosis surfaces.
+		if err := tools.CheckPyJSSyntax(path); err != nil {
+			return "\n[verify: " + path + " has a syntax error after this step — " +
+				truncate(strings.ReplaceAll(err.Error(), "\n", " "), 200) +
+				" — fix it before moving on]"
+		}
 	}
 	return ""
+}
+
+func hasAnySuffix(s string, suffixes ...string) bool {
+	for _, suf := range suffixes {
+		if strings.HasSuffix(s, suf) {
+			return true
+		}
+	}
+	return false
 }

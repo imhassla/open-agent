@@ -111,6 +111,17 @@ result envelope on stdout · `--max-cost/--max-tokens/--deadline` budget ceiling
 `--no-route` disable the dynamic router · `--sandbox` run `bash`/verification in Docker.
 Unknown flags are a hard error (never sent to the model as prose).
 
+**Best-of-N for `code`** — `open-agent code --candidates 3 "…"` runs N (2–4) candidate
+workers **in parallel**, each in an isolated throwaway checkout of HEAD and each pinned
+to a different model family (default rotation `qwen,glm,minimax`; override with
+`--families a,b`). Each candidate tree is verified (`go build ./... && go test ./...`
+when it has a `go.mod`; otherwise the worker's own `ok` verdict is trusted), then the
+single best diff is `git apply`'d onto your real tree — winner = verified success with
+the fewest changed lines, ties broken by cost. Requires a **git-clean** tree (the only
+resulting dirt is the winning diff, reviewable with `git diff`). `--max-cost` is split
+evenly across the candidates, so total spend stays under the same cap. If every
+candidate fails, nothing is applied and the exit code is 1.
+
 For scripted/agent callers (e.g. a supervising LLM delegating subtasks), see
 [`AGENTS.md`](AGENTS.md) — the machine contract (`--json` envelope, cost caps, tier
 policy, sandbox recipes).

@@ -219,6 +219,19 @@ func main() {
 			runSession(deps, opts, "", role) // legacy verb w/o prompt → session pinned to the role
 			return
 		}
+		// Best-of-N (#candidates ≥ 2, code only): N isolated candidate trees, N
+		// subprocess workers on different families, verify each, apply the winner.
+		if cmd == "code" && opts.candidates >= 2 {
+			self, serr := os.Executable()
+			if serr != nil {
+				fmt.Fprintln(os.Stderr, "cannot locate own binary for candidate subprocesses:", serr)
+				os.Exit(1)
+			}
+			os.Exit(runBestOfN(task, opts, self))
+		}
+		if opts.candidates >= 2 {
+			fmt.Fprintln(os.Stderr, "note: --candidates only applies to the code verb; running normally")
+		}
 		runOneShot(deps, role, task, opts) // legacy verb WITH prompt → one-shot (back-compat)
 	case "":
 		runSession(deps, opts, "", "") // bare → auto-classify session
@@ -423,6 +436,7 @@ type options struct {
 	noRoute      bool
 	auto         bool // start the session hands-off (skip manual plan approval)
 	dryRun       bool // do: plan + cost estimate only, do not execute
+	candidates   int  // code: best-of-N candidate runs (>=2 activates, capped at 4)
 	jsonOut      bool // machine-readable result envelope (one-shot + do)
 	version      bool // --version (alias of the `version` subcommand)
 	port         int
@@ -511,6 +525,13 @@ func parseArgs(args []string) (options, []string, error) {
 			if v, err = next(&i, "--port"); err == nil {
 				if o.port, err = strconv.Atoi(v); err != nil {
 					err = fmt.Errorf("invalid value %q for --port", v)
+				}
+			}
+		case "--candidates":
+			var v string
+			if v, err = next(&i, "--candidates"); err == nil {
+				if o.candidates, err = strconv.Atoi(v); err != nil || o.candidates < 1 {
+					err = fmt.Errorf("invalid value %q for --candidates (want an integer >= 1)", v)
 				}
 			}
 		case "--max-cost":
@@ -658,6 +679,15 @@ Flags:
       --max-cost <usd> Cost ceiling in USD (do/bench/one-shot; 0 = unbounded)
       --deadline <dur> Wall-clock ceiling, e.g. 10m (do/bench/one-shot; 0 = none)
       --dry-run        do: print the plan + a ladder-based cost estimate, don't run
+      --candidates <n> code: best-of-N — run n (2..4) candidate workers in parallel,
+                       each in an ISOLATED throwaway checkout pinned to a different
+                       model family (default rotation qwen,glm,minimax; --families
+                       overrides it), verify each (go build+test when go.mod exists),
+                       and git-apply only the winning diff onto the real tree
+                       (which must be git-clean, and run from the repo root).
+                       --max-cost is split evenly across the n candidates. Ties:
+                       fewest changed lines, then cost. --sandbox/--mcp are NOT
+                       forwarded to candidate subprocesses.
       --port <n>       Port for the dashboard command (default 8787)
       --families a,b   Families for the bench matrix (default: active family)
       --mcp <path>     Load MCP stdio servers from a config (e.g. .mcp.json) and
