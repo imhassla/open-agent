@@ -16,13 +16,23 @@ import (
 // purpose is writing .pyc files and it ignores -B/PYTHONDONTWRITEBYTECODE
 // (verified in its source), so on stock CPython it would litter the worker's
 // tree with __pycache__ junk after every checked edit — git noise in the diff.
-// ast.parse has zero side effects, and the try/except keeps the diagnosis to
-// one line instead of ~150 chars of traceback boilerplate.
-const pyParseSnippet = `import ast, sys
+// compile(..., "exec") over ast.parse: same zero-side-effect, one-line-output
+// properties, but also catches compile-STAGE SyntaxErrors ast.parse misses
+// (top-level return/break). The OSError guard keeps a file deleted between our
+// Stat and the subprocess open (TOCTOU) from surfacing a traceback as a false
+// syntax note; ValueError covers null-byte sources with one clean line.
+const pyParseSnippet = `import sys
 try:
-    ast.parse(open(sys.argv[1], "rb").read(), sys.argv[1])
+    src = open(sys.argv[1], "rb").read()
+except OSError:
+    sys.exit(0)
+try:
+    compile(src, sys.argv[1], "exec")
 except SyntaxError as e:
     print("%s:%s: %s" % (e.filename, e.lineno, e.msg))
+    sys.exit(1)
+except ValueError as e:
+    print("%s: %s" % (sys.argv[1], e))
     sys.exit(1)
 `
 

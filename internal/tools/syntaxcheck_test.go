@@ -29,9 +29,18 @@ func TestCheckPyJSSyntax(t *testing.T) {
 	if !strings.Contains(err.Error(), "bad.py:1") || !strings.Contains(strings.ToLower(err.Error()), "syntax") {
 		t.Errorf("python diagnosis lost its payload: %v", err)
 	}
-	// ast.parse must leave NO __pycache__ in the tree (the reason we don't use py_compile).
+	// The check must leave NO __pycache__ in the tree (the reason we don't use py_compile).
 	if _, serr := os.Stat("__pycache__"); serr == nil {
 		t.Error("python check littered __pycache__ into the tree")
+	}
+
+	// Compile-STAGE errors (top-level return) — ast.parse missed these; the
+	// compile() form must catch them (review residual).
+	if err := os.WriteFile("ret.py", []byte("return 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckPyJSSyntax("ret.py"); err == nil {
+		t.Error("top-level return not flagged (compile-stage error)")
 	}
 }
 

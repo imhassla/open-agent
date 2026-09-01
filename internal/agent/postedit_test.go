@@ -2,6 +2,7 @@ package agent
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -87,9 +88,14 @@ func TestPostEditVerify_PythonSyntax(t *testing.T) {
 	}
 	a := &Agent{RequireApply: true}
 	note := a.postEditVerify("write_file", mutatingTool(), map[string]any{"path": p})
-	// Best-effort: with python3 installed the note fires; without, it's silent.
-	if note != "" && !strings.Contains(note, "syntax error") {
-		t.Fatalf("unexpected note shape: %q", note)
+	// With python3 installed the note MUST fire — a vacuous "note may be empty"
+	// assertion would let the whole wiring silently regress (review finding).
+	if _, err := exec.LookPath("python3"); err == nil {
+		if !strings.Contains(note, "syntax error") {
+			t.Fatalf("python3 present but no syntax note fired: %q", note)
+		}
+	} else if note != "" {
+		t.Fatalf("no interpreter yet a note fired: %q", note)
 	}
 	if err := os.WriteFile("ok.py", []byte("x = 1\n"), 0o644); err != nil {
 		t.Fatal(err)

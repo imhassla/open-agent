@@ -48,9 +48,9 @@ func (a *Agent) postEditVerify(name string, tool Tool, args map[string]any) stri
 				" — fix it before moving on]"
 		}
 	case hasAnySuffix(path, ".py", ".js", ".mjs", ".cjs"):
-		// Subprocess parse check (py_compile / node --check) — same best-effort
-		// contract: a missing interpreter or infra failure is silent; only a
-		// real syntax diagnosis surfaces.
+		// Subprocess parse check (python compile() / node --check) — same
+		// best-effort contract: a missing interpreter or infra failure is
+		// silent; only a real syntax diagnosis surfaces.
 		if err := tools.CheckPyJSSyntax(path); err != nil {
 			return "\n[verify: " + path + " has a syntax error after this step — " +
 				truncate(strings.ReplaceAll(err.Error(), "\n", " "), 200) +
