@@ -686,8 +686,9 @@ Flags:
                        and git-apply only the winning diff onto the real tree
                        (which must be git-clean, and run from the repo root).
                        --max-cost is split evenly across the n candidates. Ties:
-                       fewest changed lines, then cost. --sandbox/--mcp are NOT
-                       forwarded to candidate subprocesses.
+                       fewest changed lines, then cost. --sandbox forwards to
+                       candidates (each mounts its own isolated tree); --mcp
+                       does NOT.
       --port <n>       Port for the dashboard command (default 8787)
       --families a,b   Families for the bench matrix (default: active family)
       --mcp <path>     Load MCP stdio servers from a config (e.g. .mcp.json) and

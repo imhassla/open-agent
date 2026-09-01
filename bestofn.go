@@ -239,6 +239,16 @@ func candidateArgs(task, family string, perCost float64, opts options, deadline 
 	if opts.model != "" {
 		args = append(args, "-m", opts.model)
 	}
+	// --sandbox forwards cleanly: the Docker sandbox mounts the SUBPROCESS's
+	// cwd, which is the candidate's isolated tree — each candidate's bash runs
+	// containerized against its own copy, exactly the semantics a caller who
+	// asked for --sandbox expects.
+	if opts.sandbox {
+		args = append(args, "--sandbox")
+		if opts.sandboxImage != "" {
+			args = append(args, "--sandbox-image", opts.sandboxImage)
+		}
+	}
 	args = append(args, "--deadline", deadline.String())
 	return append(args, "--", task)
 }

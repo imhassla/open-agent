@@ -282,3 +282,17 @@ func TestRunBestOfNSubdirRefused(t *testing.T) {
 		t.Fatalf("subdir invocation must exit 2 before spawning, got %d", code)
 	}
 }
+
+func TestCandidateArgsSandboxForwarding(t *testing.T) {
+	args := candidateArgs("fix it", "glm", 0.05, options{sandbox: true, sandboxImage: "golang:1.25"}, 10*time.Minute)
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"--sandbox", "--sandbox-image golang:1.25", "-f glm", "-- fix it"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("argv missing %q: %v", want, args)
+		}
+	}
+	// Without the flag nothing sandbox-related is emitted.
+	if joined := strings.Join(candidateArgs("t", "qwen", 0, options{}, time.Minute), " "); strings.Contains(joined, "sandbox") {
+		t.Errorf("sandbox leaked into argv: %v", joined)
+	}
+}

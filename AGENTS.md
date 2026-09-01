@@ -59,8 +59,9 @@ first. Non-interactive (piped/`</dev/null`) runs auto-apply edits: review the di
 isolated throwaway checkout pinned to a different family (default rotation
 `qwen,glm,minimax`; `--families` overrides), each verified (`go build`+`go test` when the
 tree has a `go.mod`), and only the winning diff applied to the real tree. REQUIRES a
-git-clean tree (exit 2 otherwise, nothing spent). `--max-cost` is split across the n
-candidates — budget the cap at n× a single-run cap. All-fail → exit 1, nothing applied.
+git-clean tree (exit 2 otherwise, nothing spent) and the repo ROOT. `--max-cost` is split
+across the n candidates — budget the cap at n× a single-run cap. All-fail → exit 1,
+nothing applied. `--sandbox` forwards to candidates (each mounts its own tree in Docker).
 
 ## Cost guardrails
 
