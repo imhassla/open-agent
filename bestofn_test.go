@@ -63,7 +63,7 @@ func TestParseNumstat(t *testing.T) {
 		{"garbage without tabs", 0, 0},
 	}
 	for _, tc := range cases {
-		l, f := parseNumstat(tc.in)
+		l, f, _ := parseNumstat(tc.in)
 		if l != tc.lines || f != tc.files {
 			t.Errorf("parseNumstat(%q) = (%d,%d), want (%d,%d)", tc.in, l, f, tc.lines, tc.files)
 		}

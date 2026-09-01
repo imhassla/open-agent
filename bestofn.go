@@ -52,9 +52,10 @@ type bofCandidate struct {
 	envOK  bool   // envelope parsed AND env.OK
 	runErr string // spawn/parse/timeout error; "" when the subprocess produced an envelope
 
-	diff      []byte // git diff of the candidate tree vs the HEAD baseline (binary-safe)
-	diffLines int    // added+deleted lines across the diff (numstat)
+	diff      []byte   // git diff of the candidate tree vs the HEAD baseline (binary-safe)
+	diffLines int      // added+deleted lines across the diff (numstat)
 	diffFiles int
+	diffPaths []string // numstat paths — policy-checked against the PARENT's guardrails before apply
 
 	verifyRan bool // go build+test ran (tree has go.mod)
 	verifyOK  bool // true when verify passed OR was skipped
@@ -143,15 +144,16 @@ func candidateFamilies(n int, familiesFlag, familyFlag string) ([]string, error)
 	return out, nil
 }
 
-// parseNumstat sums a `git diff --numstat` output into (changed lines, files).
-// Binary files report "-\t-\tpath" and count as one file, zero lines.
-func parseNumstat(s string) (lines, files int) {
+// parseNumstat sums a `git diff --numstat` output into (changed lines, files,
+// paths). Binary files report "-\t-\tpath" and count as one file, zero lines.
+func parseNumstat(s string) (lines, files int, paths []string) {
 	for _, ln := range strings.Split(s, "\n") {
 		parts := strings.SplitN(ln, "\t", 3)
 		if len(parts) != 3 {
 			continue
 		}
 		files++
+		paths = append(paths, strings.TrimSpace(parts[2]))
 		if a, err := strconv.Atoi(parts[0]); err == nil {
 			lines += a
 		}
@@ -159,7 +161,7 @@ func parseNumstat(s string) (lines, files int) {
 			lines += d
 		}
 	}
-	return lines, files
+	return lines, files, paths
 }
 
 // parseCandidateEnvelope extracts the one-JSON-object machine envelope from a
@@ -311,7 +313,7 @@ func runCandidate(c *bofCandidate, self, task string, perCost float64, opts opti
 	// `add -A` stages new/deleted files so `diff --cached` sees everything.
 	if _, gerr := gitBOF(c.dir, "add", "-A", "."); gerr == nil {
 		numstat, _ := gitBOF(c.dir, "diff", "--cached", "--numstat")
-		c.diffLines, c.diffFiles = parseNumstat(numstat)
+		c.diffLines, c.diffFiles, c.diffPaths = parseNumstat(numstat)
 		diffCmd := exec.Command("git", "diff", "--cached", "--binary")
 		diffCmd.Dir = c.dir
 		if d, derr := diffCmd.Output(); derr == nil {
@@ -443,6 +445,22 @@ func runBestOfN(task string, opts options, self string) int {
 	// Apply the winner: --check first so a conflicting/corrupt diff leaves the
 	// real tree bit-for-bit untouched instead of half-applied.
 	w := &cands[win]
+	// Policy gate BEFORE apply: candidate trees never see the project-local
+	// guardrails file (gitignored → absent from the materialized checkout), so
+	// user write rules would be doubly bypassed — rules not loaded in the
+	// candidate, and `git apply` not routed through the file tools. The PARENT
+	// has the full rule set: run every changed path through ConfineWrite here.
+	for _, p := range w.diffPaths {
+		if gerr := tools.ConfineWrite(p); gerr != nil {
+			fmt.Fprintf(os.Stderr, "winning diff refused: %v\n", gerr)
+			if opts.jsonOut {
+				printEnvelope(resultEnvelope{OK: false, Error: "winning diff touches a guardrail-denied path", Answer: summary, CostUSD: totalCost})
+			} else {
+				fmt.Print(summary)
+			}
+			return 1
+		}
+	}
 	for _, extra := range []string{"--check", ""} {
 		args := []string{"apply", "--whitespace=nowarn"}
 		if extra != "" {

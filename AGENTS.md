@@ -63,6 +63,11 @@ git-clean tree (exit 2 otherwise, nothing spent) and the repo ROOT. `--max-cost`
 across the n candidates — budget the cap at n× a single-run cap. All-fail → exit 1,
 nothing applied. `--sandbox` forwards to candidates (each mounts its own tree in Docker).
 
+Extendable guardrails: deny rules load from `~/.config/open-agent/guardrails` and
+`./.open-agent/guardrails` (`name: regex` for bash; `write name: glob` for write paths).
+User rules only ADD — built-ins are non-overridable; `OPEN_AGENT_NO_GUARDRAILS=1` is the
+only escape. Supervisors can drop a project-local file to tighten policy per delegation.
+
 ## Cost guardrails
 
 - `--max-cost <usd>` is checked **between** agent steps (one completion can overshoot

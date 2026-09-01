@@ -82,7 +82,7 @@ func ConfineWrite(path string) error {
 			}
 		}
 	}
-	return nil
+	return checkWriteGlobs(rel) // user write-path deny rules, inside-tree
 }
 
 // resolveExistingPrefix symlink-resolves the longest EXISTING ancestor of p and
@@ -157,6 +157,7 @@ var bashDenyRules = []bashDenyRule{
 }
 
 // CheckBashCommand rejects catastrophic command shapes before execution.
+// Built-in rules run first (authoritative), then user-loaded extras.
 func CheckBashCommand(cmd string) error {
 	if guardrailsOff() {
 		return nil
@@ -164,6 +165,119 @@ func CheckBashCommand(cmd string) error {
 	for _, r := range bashDenyRules {
 		if r.re.MatchString(cmd) {
 			return fmt.Errorf("blocked by guardrail '%s': this command shape is destructive and never needed for the task — %s", r.name, r.fix)
+		}
+	}
+	for _, r := range extraBashRules {
+		if r.re.MatchString(cmd) {
+			return fmt.Errorf("blocked by guardrail '%s' (user rule): this command matches a deny pattern from your guardrails config", r.name)
+		}
+	}
+	return nil
+}
+
+// ---- user-extendable rules -------------------------------------------------
+//
+// Users ADD deny rules via plain-text files (loaded once at startup by main):
+//   ~/.config/open-agent/guardrails   (global)
+//   ./.open-agent/guardrails          (project-local; gitignored by convention,
+//                                      so best-of-N candidate trees see only
+//                                      the global file — each candidate is a
+//                                      fresh process that loads at its own cwd)
+//
+// Format, one rule per line, '#' comments:
+//   name: regex               — bash deny rule (RE2)
+//   write name: glob          — deny WRITES to matching paths even inside the
+//                               tree; glob is filepath.Match (single *, no **)
+//                               tested against both the cwd-relative path and
+//                               its basename, so `write no-env: *.env` denies
+//                               any .env at any depth.
+//
+// Semantics: user rules add to the built-ins and can never remove them — the
+// safety floor is non-overridable; the only escape is the global kill-switch.
+// A malformed line or invalid regex is warned to stderr and skipped: a config
+// typo must never break the CLI.
+
+type extraWriteGlob struct {
+	name string
+	glob string
+}
+
+var (
+	extraBashRules  []bashDenyRule
+	extraWriteGlobs []extraWriteGlob
+)
+
+// LoadGuardrailRules loads user deny rules from the given files, REPLACING any
+// previously loaded extras (idempotent — safe to call again in tests). Missing
+// files are silently fine; bad lines are skipped with a returned error each
+// (the caller warns, never aborts).
+func LoadGuardrailRules(paths []string) []error {
+	var errs []error
+	var bash []bashDenyRule
+	var globs []extraWriteGlob
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue // absent config is the normal case
+		}
+		for i, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if rest, ok := strings.CutPrefix(line, "write "); ok {
+				name, glob, found := strings.Cut(rest, ":")
+				name, glob = strings.TrimSpace(name), strings.TrimSpace(glob)
+				if !found || name == "" || glob == "" {
+					errs = append(errs, fmt.Errorf("%s:%d: malformed write rule (want \"write name: glob\")", p, i+1))
+					continue
+				}
+				if _, merr := filepath.Match(glob, "probe"); merr != nil {
+					errs = append(errs, fmt.Errorf("%s:%d: invalid glob %q: %v", p, i+1, glob, merr))
+					continue
+				}
+				globs = append(globs, extraWriteGlob{name: name, glob: glob})
+				continue
+			}
+			name, pattern, found := strings.Cut(line, ":")
+			name, pattern = strings.TrimSpace(name), strings.TrimSpace(pattern)
+			if !found || name == "" || pattern == "" {
+				errs = append(errs, fmt.Errorf("%s:%d: malformed rule (want \"name: regex\")", p, i+1))
+				continue
+			}
+			if name == "write" {
+				// "write: glob" (colon typo for "write name: glob") would parse as
+				// a bash rule named "write" and silently guard the wrong layer —
+				// warn BEFORE regex compilation so the typo diagnosis wins even
+				// when the glob is also an invalid regex.
+				errs = append(errs, fmt.Errorf("%s:%d: rule named \"write\" — did you mean a write rule? (format: \"write name: glob\")", p, i+1))
+				continue
+			}
+			re, rerr := regexp.Compile(pattern)
+			if rerr != nil {
+				errs = append(errs, fmt.Errorf("%s:%d: invalid regex for %q: %v", p, i+1, name, rerr))
+				continue
+			}
+			bash = append(bash, bashDenyRule{name: name, re: re})
+		}
+	}
+	extraBashRules, extraWriteGlobs = bash, globs
+	return errs
+}
+
+// checkWriteGlobs applies user write-path deny globs to a cwd-relative path.
+// Case-folded on BOTH sides: on case-insensitive filesystems (APFS) writing
+// ".ENV" clobbers the ".env" a rule protects, and Match is case-sensitive —
+// folding closes that bypass; a deliberately case-distinct deny glob is
+// implausible, and matching more broadly is the safe direction for a denylist.
+func checkWriteGlobs(rel string) error {
+	lrel := strings.ToLower(rel)
+	for _, g := range extraWriteGlobs {
+		lglob := strings.ToLower(g.glob)
+		m1, _ := filepath.Match(lglob, lrel)
+		m2, _ := filepath.Match(lglob, filepath.Base(lrel))
+		if m1 || m2 {
+			return fmt.Errorf("blocked by guardrail '%s' (user rule): writing %s is denied by your guardrails config", g.name, rel)
 		}
 	}
 	return nil

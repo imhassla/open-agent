@@ -108,6 +108,16 @@ func main() {
 		fmt.Fprintln(os.Stderr, "set OPENROUTER_KEY in the environment or a .env file")
 		os.Exit(1)
 	}
+	// User guardrail rules: global config-home file + project-local file, loaded
+	// once before any worker exists. A config typo warns and skips — never aborts.
+	if home, herr := os.UserHomeDir(); herr == nil {
+		for _, lerr := range tools.LoadGuardrailRules([]string{
+			filepath.Join(home, ".config", "open-agent", "guardrails"),
+			filepath.Join(".open-agent", "guardrails"),
+		}) {
+			fmt.Fprintln(os.Stderr, "guardrails:", lerr, "(rule skipped)")
+		}
+	}
 	family := orchestrator.Family(opts.family)
 	if opts.family != "" && !orchestrator.KnownFamily(family) {
 		fmt.Fprintf(os.Stderr, "unknown model family %q (known: %v)\n", opts.family, orchestrator.Families())

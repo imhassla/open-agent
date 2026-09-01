@@ -137,6 +137,17 @@ known-catastrophic *shapes* only — an arbitrary bash redirect can still write 
 tree; the hardened Docker sandbox is the boundary for genuinely untrusted work. A denial
 is a normal tool error the model can read and adapt to. `OPEN_AGENT_NO_GUARDRAILS=1`
 disables both layers for legitimate out-of-tree work.
+
+Guardrails are **user-extendable**: put deny rules in `~/.config/open-agent/guardrails`
+(global) and/or `./.open-agent/guardrails` (project-local), one per line —
+`name: regex` denies matching bash commands (RE2), `write name: glob` denies writes to
+matching paths even inside the tree (`filepath.Match` globs, matched against the
+relative path AND its basename, so `write no-env: *.env` covers any depth; matching is
+case-folded). Write rules bind the **file tools** only — a bash redirect is out of their
+reach, so pair a `write` rule with a bash regex rule when that matters. Best-of-N applies
+the winning diff through the parent's rules, so project-local write rules hold there too.
+User rules **add to** the built-ins and can never remove them; a malformed line or
+invalid regex is warned to stderr and skipped, never fatal.
 Related switches: `OPEN_AGENT_ADAPTIVE=0` turns off the per-model lab-recommended
 prompting/sampling layer; `OPEN_AGENT_NO_REASONING_REPLAY=1` turns off MiniMax
 interleaved-thinking replay.

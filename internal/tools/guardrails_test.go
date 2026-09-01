@@ -189,3 +189,100 @@ func TestGuardrails_PreviewAndDirWiring(t *testing.T) {
 		t.Fatal("BashExecDir bypassed the denylist")
 	}
 }
+
+func TestLoadGuardrailRules(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	rules := filepath.Join(dir, "guardrails")
+	content := `# comment, blank line below are skipped
+
+no-npm-publish: \bnpm\s+publish\b
+write no-env: *.env
+bad line without separator
+badre: [unclosed
+write : missing-name
+`
+	if err := os.WriteFile(rules, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	errs := LoadGuardrailRules([]string{rules, filepath.Join(dir, "absent-file")})
+	defer LoadGuardrailRules(nil) // reset extras for other tests — registered BEFORE any Fatalf
+	if len(errs) != 3 {
+		t.Fatalf("want 3 skip errors (malformed, bad regex, missing name), got %d: %v", len(errs), errs)
+	}
+
+	// User bash rule fires — with the user-rule wording; built-ins still first.
+	if err := CheckBashCommand("npm publish --access public"); err == nil || !strings.Contains(err.Error(), "no-npm-publish") {
+		t.Fatalf("user bash rule did not fire: %v", err)
+	}
+	if err := CheckBashCommand("npm install"); err != nil {
+		t.Fatalf("unrelated command blocked: %v", err)
+	}
+	if err := CheckBashCommand("rm -rf /"); err == nil || strings.Contains(err.Error(), "user rule") {
+		t.Fatalf("built-in must stay authoritative: %v", err)
+	}
+
+	// Write glob denies matching paths at any depth (basename match) inside the tree.
+	for _, p := range []string{".env", "prod.env", "sub/dir/x.env"} {
+		if err := ConfineWrite(p); err == nil || !strings.Contains(err.Error(), "no-env") {
+			t.Errorf("write glob should deny %q, got %v", p, err)
+		}
+	}
+	if err := ConfineWrite("main.go"); err != nil {
+		t.Errorf("non-matching write blocked: %v", err)
+	}
+
+	// Kill-switch disables user rules too.
+	t.Setenv("OPEN_AGENT_NO_GUARDRAILS", "1")
+	if err := CheckBashCommand("npm publish"); err != nil {
+		t.Fatalf("kill-switch must disable user rules: %v", err)
+	}
+	if err := ConfineWrite(".env"); err != nil {
+		t.Fatalf("kill-switch must disable write globs: %v", err)
+	}
+}
+
+func TestLoadGuardrailRulesReplacesNotAppends(t *testing.T) {
+	dir := t.TempDir()
+	rules := filepath.Join(dir, "guardrails")
+	if err := os.WriteFile(rules, []byte("r1: foo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if errs := LoadGuardrailRules([]string{rules}); len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	if errs := LoadGuardrailRules([]string{rules}); len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	if len(extraBashRules) != 1 {
+		t.Fatalf("reload must replace, not append: %d rules", len(extraBashRules))
+	}
+	LoadGuardrailRules(nil)
+}
+
+func TestLoadGuardrailRules_EdgeFormats(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	rules := filepath.Join(dir, "guardrails")
+	// CRLF endings (Windows-authored) + a colon inside the regex + the
+	// "write:" typo that must warn instead of becoming a bash rule.
+	content := "no-url: https?://internal\\.corp\r\nwrite no-env: *.env\r\nwrite: *.pem\r\n"
+	if err := os.WriteFile(rules, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	errs := LoadGuardrailRules([]string{rules})
+	defer LoadGuardrailRules(nil)
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), `named "write"`) {
+		t.Fatalf("want exactly the write-typo warning, got %v", errs)
+	}
+	// CRLF must not poison the pattern; the colon stays inside it.
+	if err := CheckBashCommand("curl https://internal.corp/x"); err == nil {
+		t.Fatal("CRLF-authored colon-regex rule did not fire")
+	}
+	// Case-folded glob: .ENV clobbers .env on APFS — must be denied too.
+	for _, p := range []string{".env", ".ENV", "Prod.Env"} {
+		if err := ConfineWrite(p); err == nil {
+			t.Errorf("case variant %q escaped the write glob", p)
+		}
+	}
+}
