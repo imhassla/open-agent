@@ -162,6 +162,8 @@ func replayRun(id string) {
 			st.cached += e.CachedTokens
 			st.cost += e.Cost
 			fmt.Printf("  step %d (%s · %d tok · ~$%.4f)\n", e.Step, e.Model, e.Tokens, e.Cost)
+		case "skill_load", "skill_read":
+			(&sessionRenderer{w: os.Stdout}).Emit(e)
 		case "tool":
 			fmt.Printf("    → %s\n", e.Text)
 		case "toolres":

@@ -12,9 +12,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/imhassla/open-agent/internal/agent"
 	"github.com/imhassla/open-agent/internal/budget"
 	"github.com/imhassla/open-agent/internal/event"
 	"github.com/imhassla/open-agent/internal/orchestrator"
+	"github.com/imhassla/open-agent/internal/skills"
 	"github.com/imhassla/open-agent/internal/telemetry"
 	"github.com/imhassla/open-agent/internal/tools"
 )
@@ -23,6 +25,12 @@ import (
 type taskEmitter struct{ mu sync.Mutex }
 
 func (e *taskEmitter) Emit(ev event.Event) {
+	if ev.Kind == "skill_load" || ev.Kind == "skill_read" {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		skillProgress(os.Stderr)(ev)
+		return
+	}
 	if ev.Kind != "task" {
 		return
 	}
@@ -41,6 +49,11 @@ func (e *taskEmitter) Emit(ev event.Event) {
 // shared by the `do` subcommand and the interactive session (epic #18). Returns an
 // error (rather than exiting) so the session can recover at the prompt.
 func buildOrResumePlan(ctx context.Context, deps *orchestrator.Deps, goal string, opts options) (plan *orchestrator.Plan, bb *orchestrator.Blackboard, runID, dir string, bud *budget.Budget, err error) {
+	return buildOrResumePlanRequest(ctx, deps, skills.Request{Instructions: goal, Context: os.Getenv(skills.GeneratedContextEnv)}, opts)
+}
+
+func buildOrResumePlanRequest(ctx context.Context, deps *orchestrator.Deps, request skills.Request, opts options) (plan *orchestrator.Plan, bb *orchestrator.Blackboard, runID, dir string, bud *budget.Budget, err error) {
+	goal := request.Instructions
 	steps := opts.maxSteps
 	if steps <= 0 {
 		steps = 60 // generous global step ceiling across all parallel workers
@@ -68,10 +81,17 @@ func buildOrResumePlan(ctx context.Context, deps *orchestrator.Deps, goal string
 	}
 
 	runID, dir = ensureRunDir(newRunID(goal))
+	previousEmitter := deps.Emit
+	sinks := []func(event.Event){event.StampRunID(runID, event.JSONLSink(filepath.Join(dir, "events.jsonl")))}
+	if previousEmitter != nil {
+		sinks = append(sinks, previousEmitter.Emit)
+	}
+	deps.Emit = event.NewBus(sinks...)
+	defer func() { deps.Emit = previousEmitter }()
 	fmt.Fprintln(os.Stderr, "planning…")
-	p, perr := orchestrator.MakePlanConsensus(ctx, deps, goal, 3, bud)
+	p, perr := orchestrator.MakePlanConsensusWithRequest(ctx, deps, goal, request, 3, bud)
 	if perr != nil {
-		return nil, nil, "", "", nil, fmt.Errorf("plan error: %w", perr)
+		return nil, nil, runID, dir, bud, fmt.Errorf("plan error: %w", perr)
 	}
 	plan = p
 	_ = savePlan(filepath.Join(dir, "plan.json"), plan)
@@ -99,6 +119,20 @@ func executePlan(ctx context.Context, deps *orchestrator.Deps, plan *orchestrato
 		VerifyRetries: 1,
 		Replanner:     orchestrator.DefaultReplanner,
 	})
+	if plan.Request != nil {
+		snapshot := bb.Snapshot()
+		var ids []string
+		for id := range snapshot {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		var contexts []string
+		for _, id := range ids {
+			contexts = append(contexts, snapshot[id].WorkflowContext)
+		}
+		plan.Request.WorkflowContext = agent.MergeSkillSources(plan.Request.WorkflowContext, contexts...)
+		_ = savePlan(filepath.Join(dir, "plan.json"), plan)
+	}
 
 	if art, ok := bb.GetArtifact(plan.Terminal()); ok && strings.TrimSpace(art.Content) != "" {
 		terminal = art.Content
@@ -130,9 +164,23 @@ func executePlan(ctx context.Context, deps *orchestrator.Deps, plan *orchestrato
 // subagents (checkpoint/resume + a JSONL event trace), then prints the synthesizer
 // task's answer. Non-interactive (the `do` subcommand) — no plan approval gate.
 func runDo(ctx context.Context, deps *orchestrator.Deps, goal string, opts options) {
+	previousEmitter := deps.Emit
+	sinks := []func(event.Event){skillProgress(os.Stderr)}
+	if previousEmitter != nil {
+		sinks = append(sinks, previousEmitter.Emit)
+	}
+	deps.Emit = event.NewBus(sinks...)
+	defer func() { deps.Emit = previousEmitter }()
 	plan, bb, runID, dir, bud, err := buildOrResumePlan(ctx, deps, goal, opts)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		if opts.jsonOut {
+			envelope := resultEnvelope{OK: false, Error: err.Error(), RunID: runID}
+			if bud != nil {
+				envelope.Steps, envelope.Tokens, envelope.CostUSD = int(bud.Steps()), int(bud.Tokens()), bud.CostUSD()
+			}
+			printEnvelope(envelope)
+		}
 		os.Exit(1)
 	}
 	printPlan(os.Stderr, plan)

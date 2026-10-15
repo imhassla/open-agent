@@ -9,6 +9,7 @@ import (
 
 	"github.com/imhassla/open-agent/internal/event"
 	"github.com/imhassla/open-agent/internal/orchestrator"
+	"github.com/imhassla/open-agent/internal/skills"
 )
 
 // colorizeDiff ANSI-colors a unified diff (green +, red -, cyan header) when color is
@@ -56,6 +57,12 @@ func (r *sessionRenderer) Emit(ev event.Event) {
 			tag = "[" + ev.TaskID + "] "
 		}
 		r.dim("  " + tag + "⚙ " + ev.Text)
+	case "skill_load", "skill_read":
+		tag := ""
+		if ev.TaskID != "" {
+			tag = "[" + skills.TerminalText(ev.TaskID) + "] "
+		}
+		r.dim("  " + tag + "✓ " + skills.TerminalText(ev.Text))
 	case "task":
 		switch ev.Text {
 		case "start":
@@ -114,4 +121,14 @@ func statusLine(deps *orchestrator.Deps, pin orchestrator.Role, manual bool, mod
 		modelSeg = " · model " + model
 	}
 	return fmt.Sprintf("[%s · router %s · %s · %s%s · %dtok · $%.4f]", deps.Family, router, mode, intent, modelSeg, tokens, cost)
+}
+
+// skillProgress preserves one-shot stdout while sharing the interactive renderer.
+func skillProgress(w io.Writer) func(event.Event) {
+	r := newSessionRenderer(w)
+	return func(ev event.Event) {
+		if ev.Kind == "skill_load" || ev.Kind == "skill_read" {
+			r.Emit(ev)
+		}
+	}
 }

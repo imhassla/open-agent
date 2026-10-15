@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -13,6 +14,7 @@ import (
 	"github.com/imhassla/open-agent/internal/agent"
 	"github.com/imhassla/open-agent/internal/llm"
 	"github.com/imhassla/open-agent/internal/orchestrator"
+	"github.com/imhassla/open-agent/internal/skills"
 	"github.com/imhassla/open-agent/internal/telemetry"
 	"github.com/imhassla/open-agent/internal/tools"
 )
@@ -109,6 +111,8 @@ func runSession(deps *orchestrator.Deps, opts options, seed string, pin orchestr
 		}
 	}
 
+	s.reconcileSkillMounts()
+
 	// Checkpoints: a shadow-git snapshot store so /rewind can undo the code AND
 	// conversation to before any turn without touching the user's git. Best-effort
 	// — a disabled store just makes /rewind explain why.
@@ -154,14 +158,27 @@ func runSession(deps *orchestrator.Deps, opts options, seed string, pin orchestr
 // the full history isn't re-sent (and re-billed) to every ephemeral worker.
 const historyBudget = 48000 // ~12k tokens of transcript; well under any model's window
 
-func (s *session) foldHistory(user, assistant string) {
-	s.history = append(s.history, llm.Message{Role: "user", Content: user}, llm.Message{Role: "assistant", Content: assistant})
+func (s *session) foldHistory(user, assistant string, skillContext ...llm.Message) {
+	s.history = append(s.history, llm.Message{Role: "user", Content: user})
+	s.history = append(s.history, skillContext...)
+	s.history = append(s.history, llm.Message{Role: "assistant", Content: assistant})
+	// Replace cumulative reminders before budgeting, so old copies cannot force
+	// early compaction of instruction bodies and conversation turns.
+	s.history = agent.WithSkillReminder(s.history, agent.WorkflowContext(s.history))
 	if historyChars(s.history) > historyBudget {
 		s.compactHistory()
 	}
+	s.reconcileSkillMounts()
 	// Persist after every turn so the dialog survives a restart/update and can be
 	// resumed with --continue. Best-effort: a write failure never breaks the turn.
 	_ = saveSession(s)
+}
+
+// Reconciliation belongs to the session owner, never an ephemeral worker.
+func (s *session) reconcileSkillMounts() {
+	if err := agent.ReconcileSkillHistory(s.history); err != nil {
+		fmt.Fprintf(os.Stderr, "skills: %s\n", skills.TerminalText(err.Error()))
+	}
 }
 
 func historyChars(h []llm.Message) int {
@@ -178,6 +195,13 @@ func historyChars(h []llm.Message) int {
 // summarizer fails or returns nothing, it falls back to the old drop behavior so
 // a turn never wedges on a failing model.
 func (s *session) compactHistory() {
+	reminder := agent.WorkflowContext(s.history)
+	if reminder != "" {
+		s.history = agent.WithSkillReminder(s.history, "")
+		defer func() {
+			s.history = agent.WithSkillReminder(trimTranscript(s.history, historyBudget-len(reminder)), reminder)
+		}()
+	}
 	// A single pair can't be summarized usefully — bound it with the drop loop.
 	if len(s.history) <= 2 {
 		s.dropOldestToBudget()
@@ -214,11 +238,41 @@ func (s *session) compactHistory() {
 // dropOldestToBudget trims oldest pairs until under budget — the pre-summarization
 // behavior, used as the never-wedge fallback and for un-summarizable histories.
 func (s *session) dropOldestToBudget() {
-	total := historyChars(s.history)
-	for total > historyBudget && len(s.history) > 2 {
-		total -= len(s.history[0].Content) + len(s.history[1].Content)
-		s.history = s.history[2:]
+	reminder := agent.WorkflowContext(s.history)
+	s.history = agent.WithSkillReminder(trimTranscript(agent.WithSkillReminder(s.history, ""), historyBudget-len(reminder)), reminder)
+}
+
+// Folded transcripts contain reference messages as well as user/answer pairs.
+// Drop reloadable bodies first, then whole oldest turns; reserve the deterministic
+// reminder instead of depending on the summarizer to retain invocation policy.
+func trimTranscript(history []llm.Message, limit int) []llm.Message {
+	for historyChars(history) > limit && len(history) > 0 {
+		body := -1
+		for i, m := range history {
+			if m.Name == "skill_context" {
+				body = i
+				break
+			}
+		}
+		if body >= 0 {
+			history = append(history[:body], history[body+1:]...)
+			continue
+		}
+		start := 0
+		if len(history) > 1 && strings.HasPrefix(history[0].Content, "[Summary") {
+			start = 1
+		}
+		end := start + 1
+		for end < len(history) && !(history[end].Role == "user" && history[end].Name == "") {
+			end++
+		}
+		if start == 1 && end == len(history) {
+			history = history[1:]
+			continue
+		}
+		history = append(history[:start], history[end:]...)
 	}
+	return history
 }
 
 // summarize compresses the given messages into a dense note via the cheap model
@@ -344,6 +398,9 @@ func (s *session) rewind(arg string) {
 		s.tokens, s.cost = cp.tokens, cp.cost
 		_ = saveSession(s)
 	}
+	if axis == "code" || axis == "chat" || axis == "both" {
+		s.reconcileSkillMounts()
+	}
 	// A FULL rewind discards later turns (they're undone on both axes); a
 	// single-axis rewind leaves the checkpoint list intact so the other axis can
 	// still be rewound to a later turn.
@@ -385,6 +442,7 @@ func (s *session) turn(line string) {
 // converse runs a single conversational turn (ask or code-edit) on an ephemeral
 // worker seeded from the transcript, then folds the exchange back into history.
 func (s *session) converse(ctx context.Context, role orchestrator.Role, line string) {
+	s.reconcileSkillMounts()
 	w, err := orchestrator.BuildWorker(role, s.deps, orchestrator.Options{
 		ModelOverride: s.model, MaxSteps: s.opts.maxSteps, Verbose: s.opts.verbose,
 		Streaming: !s.opts.noStream, StreamOut: os.Stdout, Budget: oneShotBudget(s.opts),
@@ -405,7 +463,7 @@ func (s *session) converse(ctx context.Context, role orchestrator.Role, line str
 		// Record the interrupted/failed turn in the transcript so a follow-up
 		// ("continue…") has context. Without this the turn vanished and the next
 		// message hit a worker with no memory of it — producing a do-nothing stub.
-		s.foldHistory(line, fmt.Sprintf("(this turn did not complete: %s — its work above may be partial)", truncate(rerr.Error(), 120)))
+		s.foldHistory(line, fmt.Sprintf("(this turn did not complete: %s — its work above may be partial)", truncate(rerr.Error(), 120)), w.SkillHistory()...)
 		s.deps.Tlog.Record(telemetry.Record{Kind: string(role), Task: truncate(line, 200), Model: w.Model, OK: false, Err: rerr.Error(), ToolErrors: w.ToolErrors})
 		return
 	}
@@ -428,7 +486,7 @@ func (s *session) converse(ctx context.Context, role orchestrator.Role, line str
 		fmt.Fprintf(os.Stderr, "(turn %s — partial; type a follow-up to continue)\n", reason)
 		answer += fmt.Sprintf("\n\n(note: this turn was cut short: %s — continue from here)", reason)
 	}
-	s.foldHistory(line, answer)
+	s.foldHistory(line, answer, w.SkillHistory()...)
 	s.tokens += w.TotalTokens
 	s.cost += w.TotalCost
 	s.deps.Tlog.Record(telemetry.Record{
@@ -440,9 +498,20 @@ func (s *session) converse(ctx context.Context, role orchestrator.Role, line str
 // orchestrate runs a multi-step goal as one super-turn: plan → (manual gate) → execute
 // → fold the terminal deliverable back into the conversation as one assistant turn.
 func (s *session) orchestrate(ctx context.Context, line string) {
-	plan, bb, runID, dir, bud, err := buildOrResumePlan(ctx, s.deps, line, s.opts)
+	s.reconcileSkillMounts()
+	var references strings.Builder
+	for _, message := range s.history {
+		if message.Name == "skill_context" {
+			references.WriteString(message.Content + "\n")
+		}
+	}
+	request := skills.Request{Instructions: line, WorkflowContext: agent.WorkflowContext(s.history), ReferenceContext: references.String()}
+	plan, bb, runID, dir, bud, err := buildOrResumePlanRequest(ctx, s.deps, request, s.opts)
 	if err != nil {
+		reminder, reminderErr := agent.RememberSkillInstruction(request.WorkflowContext, line)
+		err = errors.Join(err, reminderErr)
 		fmt.Fprintln(os.Stderr, err)
+		s.foldHistory(line, fmt.Sprintf("(planning failed: %v)", err), agent.WithSkillReminder(nil, reminder)...)
 		return
 	}
 	// Account for the run budget on EVERY exit after planning — planning (the
@@ -455,7 +524,7 @@ func (s *session) orchestrate(ctx context.Context, line string) {
 		switch askApproval(ctx, s.lines) {
 		case approveReject:
 			fmt.Fprintln(os.Stderr, "(skipped)")
-			s.foldHistory(line, "(plan skipped by the user)")
+			s.foldHistory(line, "(plan skipped by the user)", planningSkillHistory(plan, s.history)...)
 			return
 		case approveAuto:
 			s.manual = false // hands-off for the rest of the session
@@ -475,7 +544,26 @@ func (s *session) orchestrate(ctx context.Context, line string) {
 	default:
 		folded = "(orchestrated run produced no terminal output)"
 	}
-	s.foldHistory(line, folded)
+	s.foldHistory(line, folded, planningSkillHistory(plan, s.history)...)
+}
+
+func planningSkillHistory(plan *orchestrator.Plan, prior []llm.Message) []llm.Message {
+	if plan.Request == nil || plan.Request.WorkflowContext == "" {
+		return nil
+	}
+	// Carry the new named blocks; older bodies already belong to prior history.
+	var old strings.Builder
+	for _, m := range prior {
+		if m.Name == "skill_context" {
+			old.WriteString(m.Content + "\n")
+		}
+	}
+	reference := strings.TrimPrefix(plan.Request.ReferenceContext, old.String())
+	var history []llm.Message
+	if reference != "" {
+		history = append(history, llm.Message{Role: "user", Name: "skill_context", Content: reference})
+	}
+	return agent.WithSkillReminder(history, plan.Request.WorkflowContext)
 }
 
 // editApprover returns the P2 diff-preview gate for a turn: nil unless the session is
@@ -571,8 +659,12 @@ func (s *session) slash(line string) bool {
 		return true
 	case "/help", "/?":
 		printSessionHelp()
+	case "/skills":
+		runSkillInventory(fields[1:], os.Stdout, os.Stderr, false)
 	case "/reset":
 		s.history = nil
+		s.reconcileSkillMounts()
+		_ = saveSession(s)
 		fmt.Println("(conversation history cleared)")
 	case "/rewind":
 		s.rewind(arg)
@@ -635,7 +727,8 @@ func (s *session) slash(line string) bool {
 			cancel()
 		}
 	default:
-		fmt.Println("unknown command:", cmd, "— type /help")
+		s.checkpointTurn()
+		s.turn(line)
 	}
 	return false
 }
@@ -652,6 +745,7 @@ func printSessionHelp() {
   /family [name]            show or switch the model family
   /reset                    clear conversation history
   /rewind [n] [code|chat]   undo to before turn n — files + conversation (or one axis); no n lists checkpoints
+  /skills [--verbose]       list current skills and discovery diagnostics (no model call)
   /cost                     session token/cost total
   /help                     this help
   /exit                     quit (Ctrl-D also works)

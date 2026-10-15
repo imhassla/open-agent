@@ -8,11 +8,13 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/imhassla/open-agent/internal/schedule"
+	"github.com/imhassla/open-agent/internal/skills"
 )
 
 // runSchedule dispatches the `schedule` subcommands: add, list, remove, pause,
@@ -152,16 +154,13 @@ func runScheduleDaemon(store *schedule.Store, opts options) {
 }
 
 // fireJob runs one job as a subprocess and records its outcome on the pointer.
-// chainCtx, when non-empty, is the upstream parent's output prepended to the
-// task so a chained job acts on fresh results from the job it depends on.
+// chainCtx is generated upstream output, transported separately from the saved
+// user task so it cannot independently request a user-only skill.
 func fireJob(ctx context.Context, self string, j *schedule.Job, chainCtx string) {
 	fmt.Fprintf(os.Stderr, "[%s] firing %s (%s)\n", time.Now().Format("15:04:05"), j.ID, j.Verb)
-	task := j.Task
-	if chainCtx != "" {
-		task = "Context from the upstream scheduled job you depend on:\n" + chainCtx + "\n\n---\nYour task:\n" + j.Task
-	}
-	cargs := []string{j.Verb, "--json", "--max-cost", fmt.Sprintf("%f", j.MaxCost), task}
+	cargs := []string{j.Verb, "--json", "--max-cost", strconv.FormatFloat(j.MaxCost, 'g', -1, 64), "--", j.Task}
 	cmd := exec.CommandContext(ctx, self, cargs...)
+	cmd.Env = append(os.Environ(), skills.GeneratedContextEnv+"="+chainCtx)
 	cmd.Stdin = nil
 	out, _ := cmd.Output() // stderr (progress) is discarded; stdout is the envelope
 

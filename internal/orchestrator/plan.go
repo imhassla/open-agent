@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"fmt"
+	"github.com/imhassla/open-agent/internal/skills"
 	"strings"
 )
 
@@ -9,13 +10,14 @@ import (
 // Boundaries) make delegation explicit — the dominant cause of wasted work is
 // under-specified subtasks.
 type Task struct {
-	ID           string   `json:"id"`
-	Goal         string   `json:"goal"`
-	Role         Role     `json:"role"`
-	Deps         []string `json:"deps"`
-	Acceptance   string   `json:"acceptance,omitempty"`    // for code tasks: a shell command that must exit 0
-	OutputFormat string   `json:"output_format,omitempty"` // what the result should look like
-	Boundaries   string   `json:"boundaries,omitempty"`    // what NOT to do / scope limits
+	Request      *skills.Request `json:"-"` // supplied by the owning run, never by a planner's generated task
+	ID           string          `json:"id"`
+	Goal         string          `json:"goal"`
+	Role         Role            `json:"role"`
+	Deps         []string        `json:"deps"`
+	Acceptance   string          `json:"acceptance,omitempty"`    // for code tasks: a shell command that must exit 0
+	OutputFormat string          `json:"output_format,omitempty"` // what the result should look like
+	Boundaries   string          `json:"boundaries,omitempty"`    // what NOT to do / scope limits
 
 	Status string `json:"-"` // "", "done", "failed"
 	Result string `json:"-"`
@@ -41,8 +43,9 @@ type Task struct {
 
 // Plan is a goal decomposed into a dependency-aware task graph.
 type Plan struct {
-	Goal  string `json:"goal"`
-	Tasks []Task `json:"tasks"`
+	Request *skills.Request `json:"request,omitempty"` // original user intent and retained skill reference context
+	Goal    string          `json:"goal"`
+	Tasks   []Task          `json:"tasks"`
 
 	// PlannerModel is the model that generated this plan (the consensus winner's
 	// generator). Persisted in plan.json so a whole-run outcome can be recorded

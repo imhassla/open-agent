@@ -14,6 +14,8 @@ type Event struct {
 	CachedTokens int // prompt tokens served from the provider cache (0 if unknown)
 	Cost         float64
 	Text         string
+	SkillName    string `json:",omitempty"` // skill load/read identity, never instruction contents
+	SkillSource  string `json:",omitempty"` // canonical SKILL.md path
 	TS           int64
 }
 

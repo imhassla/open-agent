@@ -14,7 +14,8 @@ import (
 	"time"
 )
 
-// Job is one recurring task. Verb is code|ask|do|research; Task is the prompt.
+// Job is one recurring task. Verb is code|ask|do|research; Task is the saved user
+// instruction, kept separate from generated parent-job output at execution.
 // Every holds the interval spec (a Go duration like "30m"/"6h" or an alias:
 // hourly/daily/weekly). LastRun is the last fire time (zero = never fired).
 type Job struct {
@@ -249,9 +250,8 @@ func (s *Store) DueJobs(now time.Time) []*Job {
 	return out
 }
 
-// ChainContext returns the upstream context a chained job should prepend to its
-// task at fire time (empty for interval jobs or a parent with no captured
-// answer).
+// ChainContext returns generated upstream context for a chained job, separate
+// from its saved task (empty for interval jobs or a parent with no captured answer).
 func (s *Store) ChainContext(j *Job) string {
 	parent := s.Parent(j)
 	if parent == nil || strings.TrimSpace(parent.LastAnswer) == "" {

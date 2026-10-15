@@ -128,6 +128,6 @@ func (a *Agent) compact(ctx context.Context, bud *budget.Budget) error {
 		}
 	}
 	compacted = append(compacted, tail...)
-	a.msgs = compacted
+	a.msgs = WithSkillReminder(compacted, a.skillReminder())
 	return nil
 }

@@ -128,6 +128,208 @@ For scripted/agent callers (e.g. a supervising LLM delegating subtasks), see
 [`AGENTS.md`](AGENTS.md) — the machine contract (`--json` envelope, cost caps, tier
 policy, sandbox recipes).
 
+**Local skills** — `code`, `ask` and `research` discover `SKILL.md` bundles recursively
+in project `.agents/skills/` and `~/.agents/skills/`. The project root is the nearest
+Git worktree root, or cwd outside Git. Project names override personal names with a
+stderr diagnostic; duplicate names within one scope are ambiguous. Symlinked
+bundles work; aliases and directory cycles are deduplicated. Each root has a
+separate scan budget of 4,096 directory entries (including regular files) and a
+maximum nesting depth of 32 below the root. A directory exceeding the remaining
+entry budget is skipped as a whole; deeper subtrees are skipped. Reaching a limit
+reports `scan_limit` and an incomplete inventory, retaining discovered entries
+and scanning the other root independently. These bounds limit traversal work,
+not the duration of an individual filesystem operation.
+
+```markdown
+---
+name: review
+description: Review changes using the project's conventions.
+disable-model-invocation: false
+---
+Read references/checklist.md, then review the changes.
+```
+
+`name` defaults to the bundle directory's name; `description` is required. YAML
+frontmatter is parsed as YAML. The boolean `disable-model-invocation` hides a
+user-only skill from automatic selection. Descriptive metadata is inert;
+unsupported behavioral fields such as `allowed-tools` are diagnosed and ignored.
+Metadata too large for a catalog page is omitted with a diagnostic; named reads
+retain their ordinary bounds. Nonregular instruction files are skipped.
+Workers receive a bounded metadata catalog and use `skills_list(cursor)` and
+`skill_view(name, file_path, start, end)` to read instructions and UTF-8 resources.
+Resources are relative to the canonical bundle, with traversal and escaping
+symlinks rejected. Reads run no preprocessing and install no dependencies. Pages
+report `next_cursor` or `next_start`; view ranges are 1-based and inclusive. A
+single line that cannot fit a view page fails clearly and must be split. Reads use
+bounded memory; exact line counts and UTF-8 validation still scan the full file.
+
+Inspect what open-agent can discover without asking a model:
+
+```sh
+open-agent skills list
+open-agent skills list --verbose
+open-agent skills list --json
+```
+
+Inside a session, use `/skills` or `/skills --verbose`. Each invocation scans
+current files using the same discovery and precedence rules as workers. Listing
+makes no model calls and does not change conversation history, skill selection
+or sandbox mounts. The standalone command also works offline without an API key.
+
+Example compact output (token estimates are illustrative):
+
+```text
+✔ ask-matt     locked by author · user-only · user · ~30 tok
+✔ code-review  user · ~140 tok
+```
+
+`✔` means valid and unambiguous after precedence; it does not mean instructions
+are already loaded into the conversation. User-only skills and skills too large
+for automatic catalog pages remain visible. `locked by author · user-only`
+reflects `disable-model-invocation: true`, not filesystem permissions. `user` and
+`project` identify scope. Listing has no enable/disable controls.
+
+`~tok` estimates the UTF-8 size of name + a separator + description at roughly
+four bytes per token, rounded up to ten tokens. It describes metadata only, not
+full instructions, billed tokens or actual automatic-context usage. User-only
+skills can have nonzero estimates. `--verbose` adds full descriptions and source
+paths; it never displays the instruction body. Terminal control characters are
+escaped in text output; JSON preserves the original values.
+
+A separate **Diagnostics** section includes reasons and full paths for invalid,
+ambiguous and overridden entries, plus other discovery warnings. Unavailable
+entries never receive `✔`. Missing roots and empty inventories are normal.
+
+`--json` writes exactly one object to stdout, including with `--verbose`:
+
+```json
+{
+  "complete": true,
+  "skills": [
+    {
+      "name": "review",
+      "description": "Review changes.",
+      "user_only": false,
+      "scope": "project",
+      "source": "/workspace/.agents/skills/review/SKILL.md",
+      "base_dir": "/workspace/.agents/skills/review",
+      "estimated_tokens": 10
+    }
+  ],
+  "diagnostics": []
+}
+```
+
+Discovery rejects YAML frontmatter larger than 16 KiB before decoding or retaining
+metadata. Accepted descriptions remain complete in verbose and JSON inventory;
+large instruction bodies remain available through bounded reads.
+
+Skills are sorted by name. Each diagnostic has `category`, `message` and `paths`.
+Categories are `invalid`, `ambiguous`, `overridden`, `filesystem`, `naming`,
+`description_abbreviated`, `unsupported_metadata`, `catalog_limit` and `scan_limit`. Paths are
+absolute when available; an unavailable working directory or home may have no
+resolvable path. `complete` reports whether discovery finished. Exit `0` means a
+complete scan, even with entry diagnostics; `1` means an incomplete scan or output
+failure; `2` means invalid arguments. Incomplete scans retain any discovered
+entries and diagnostics. Interactive errors leave the session running. Workers
+and planners report unavailable roots (including unset `HOME`) and continue with
+usable skills from the other root. An explicitly requested unavailable skill
+still fails before a model call.
+
+`/skills` is reserved for inventory. Use `/skill:skills` to explicitly invoke a
+skill named `skills`.
+
+Docker skill mounts follow the retained conversation. Starting or continuing a
+session, reset, rewind and turn boundaries reconcile aliases and readonly project
+overlays with the stored source directories. Missing or redirected directories
+are omitted. Persisted source paths must match valid bundles discovered from the
+fixed skill roots, including bundles shadowed by name precedence; session data
+alone cannot authorize a host-directory mount. Workers can add accepted bundles
+throughout a turn; reconciliation waits until all workers finish. Inventory
+commands do not change these mounts.
+
+Successful instruction loads appear in the response log beside tool activity:
+
+```text
+  ✓ skill loaded: /ask-matt
+```
+
+This is emitted by open-agent after loading succeeds, before subsequent model
+work. It confirms instructions are available in context; it does not certify
+that the model followed them. Partial instruction reads show `skill read` and
+the line range instead. Retained history, inventory and supporting-file reads
+do not produce a new instruction-load notice; failed loads never report success.
+Explicitly reading the skill again produces another notice.
+
+Autonomous `improve` findings remain generated context. Only the original user
+focus argument can request a user-only skill for its fixing workers.
+
+CLI notices go to stderr, preserving JSON stdout. Saved run events include the
+skill name and source path, and `open-agent replay <run_id>` shows the notices.
+Delegated loads include their task ID. Interactive conversation notices appear
+in the live log; ordinary conversation turns do not create a separate run trace.
+
+Request a skill with `/review`, `/skill:review`, or plain language naming it,
+anywhere in the prompt: `open-agent ask "Explain the changes, then use /review"`.
+Leading interactive built-in commands retain their meaning; `/skill:help` names
+a skill that collides with `/help`. Paths and URLs do not become slash requests.
+An existing root path such as `/tmp` stays a path unless `tmp` is a known skill;
+`/skill:tmp` always requests the skill, including when it is unavailable.
+Distinct named bodies are provided as reference blocks in first-mention order.
+The model interprets the complete user wording: explaining or negating a skill
+does not instruct it to run the procedure. Requested workflows can read named
+user-only helpers lazily. The flag is an invocation policy, not a filesystem
+security boundary; existing code tools can still read files.
+
+Follow-ups and `--continue` retain reference bodies and the original instruction
+sequence in the conversation. `--continue` trusts the saved transcript; source-path
+validation does not authenticate historical user intent. Compaction can summarize
+bodies while preserving name/source reminders for another `skill_view`. Explanation remains explanation;
+later stop instructions supersede earlier use. `/reset` clears and immediately
+saves history; `/rewind` restores the matching context. Restoring a conversation
+does not refresh loaded bytes; another actual read uses current files. Retained
+instructions keep their recorded resource directory when a same-name override
+appears. Unavailable directories are reported without silently switching bundles;
+files at the same directory are not version snapshots.
+
+`do` planners receive named reference bodies before decomposition and retain the
+original request separately from their generated goals. Workers and spawned
+children inherit request intent and source reminders, loading bodies/helpers
+as needed. Reads from failed attempts survive retries, replanning and saved-run
+resume; failed tasks remain unfinished. Replanners receive missing instruction
+bodies while preserving complete historical bodies. Interactive `/do` carries
+the continuing context; `do --resume` restores the saved request and references.
+Judges retain their independent criteria; judges, compaction and bulk calls get
+no automatic skill catalog. Plan-consensus tie-breaks reuse validated skill
+references as task requirements, without another invocation. Code-consensus
+callers include relevant requirements in their existing prompt. Required planning
+context, including recovery text, that cannot fit fails clearly.
+
+Scheduled `code`, `ask`, `research` and `do` tasks invoke skills from any position
+in their saved instructions. Upstream chain output travels as generated context
+and cannot independently request user-only skills. Discovery still uses the
+schedule daemon's working directory. Ask retains its existing capability limits.
+Requested workflows may read named user-only helpers, and scheduled runs use the
+same cost ceilings as direct requests. For example:
+
+```sh
+open-agent schedule add --every daily --max-cost 0.05 code "Check changes using /review"
+```
+
+Candidates discover skills from their actual isolated checkout and accessible
+user root. Committed project skills arrive through Git; ignored parent bundles
+are unavailable, and untracked files still fail the existing clean-tree check.
+Missing requested skills fail visibly. No bundles are copied from the parent.
+
+With `--sandbox`, loaded bundles and later helpers have stable readonly shell
+paths under `/skills/`, reported as `execution_dir`. Selected bundles reachable
+through `/work` are readonly there too; other project files remain writable.
+If the working directory is inside a selected bundle, that directory is readonly.
+Host file tools retain their existing behavior. Scripts must use the reported
+execution directory and dependencies already present in the sandbox image.
+Whole-agent `open-agent sandbox` environments discover their own guest-local
+project and user skills; host skill directories are never mounted implicitly.
+
 **Guardrails** (on by default): mutating file *tools* refuse to write outside the working
 directory (absolute paths out of tree, `../` escapes, symlink targets), and `bash` rejects
 a tight list of catastrophic command shapes (recursive `rm` of `/` or `~`, force-push —

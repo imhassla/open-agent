@@ -29,6 +29,7 @@ import (
 	"github.com/imhassla/open-agent/internal/llm"
 	"github.com/imhassla/open-agent/internal/orchestrator"
 	"github.com/imhassla/open-agent/internal/rating"
+	"github.com/imhassla/open-agent/internal/skills"
 	"github.com/imhassla/open-agent/internal/telemetry"
 	"github.com/imhassla/open-agent/internal/tools"
 )
@@ -41,6 +42,11 @@ func main() {
 		usage()
 		return
 	}
+	// Inventory is offline and owns its flags, before config or model setup.
+	if len(args) > 0 && args[0] == "skills" {
+		os.Exit(runSkills(args[1:], os.Stdout, os.Stderr))
+	}
+
 	// `sandbox` owns its own flags (--env/--ephemeral/-- CMD) that the strict
 	// top-level parser would reject, so route it on the RAW args first.
 	if len(args) > 0 && args[0] == "sandbox" {
@@ -67,6 +73,21 @@ func main() {
 		cmd = positional[0]
 		positional = positional[1:]
 	}
+	// parseArgs permits flags before the verb. Route this form too, retaining
+	// the original flags so the inventory parser can reject unrelated options.
+	if cmd == "skills" {
+		inventoryArgs := make([]string, 0, len(args)-1)
+		removed := false
+		for _, arg := range args {
+			if !removed && arg == "skills" {
+				removed = true
+				continue
+			}
+			inventoryArgs = append(inventoryArgs, arg)
+		}
+		os.Exit(runSkills(inventoryArgs, os.Stdout, os.Stderr))
+	}
+
 	task := strings.TrimSpace(strings.Join(positional, " "))
 
 	if cmd == "models" {
@@ -271,13 +292,14 @@ func runOneShot(deps *orchestrator.Deps, role orchestrator.Role, task string, op
 		_ = os.WriteFile(filepath.Join(runDir, "meta.json"), meta, 0o644)
 	}
 	prevEmit := deps.Emit
-	sinks := []func(event.Event){event.StampRunID(runID, event.JSONLSink(filepath.Join(runDir, "events.jsonl")))}
+	sinks := []func(event.Event){event.StampRunID(runID, event.JSONLSink(filepath.Join(runDir, "events.jsonl"))), skillProgress(os.Stderr)}
 	if prevEmit != nil {
 		sinks = append(sinks, prevEmit.Emit)
 	}
 	deps.Emit = event.NewBus(sinks...)
 	defer func() { deps.Emit = prevEmit }()
 	ag, err := orchestrator.BuildWorker(role, deps, orchestrator.Options{
+		Request:       &skills.Request{Instructions: task, Context: os.Getenv(skills.GeneratedContextEnv)},
 		ModelOverride: opts.model, MaxSteps: opts.maxSteps, Verbose: opts.verbose,
 		// Stream to stdout (not the default stderr) so the live output IS the
 		// answer on stdout; the reprint below is then guarded on AnswerStreamed
@@ -291,6 +313,9 @@ func runOneShot(deps *orchestrator.Deps, role orchestrator.Role, task string, op
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
+		if opts.jsonOut {
+			printEnvelope(resultEnvelope{OK: false, Error: err.Error(), RunID: runID})
+		}
 		os.Exit(1)
 	}
 	res, runErr := ag.Run(ctx, task)
@@ -300,9 +325,9 @@ func runOneShot(deps *orchestrator.Deps, role orchestrator.Role, task string, op
 	if runErr == nil && (res == nil || strings.TrimSpace(res.Answer) == "") {
 		runErr = fmt.Errorf("run produced an empty answer (%d steps, ~$%.4f spent)", stepsOf(res), ag.TotalCost)
 	}
-	// Feed the outcome to the cost-ladder router (unless the user aborted — that
-	// is not the model's fault).
-	if !errors.Is(runErr, context.Canceled) {
+	// Only attempted model steps train the router. Invalid skill requests fail
+	// before execution; neither they nor user aborts establish model inadequacy.
+	if ag.StepsTaken > 0 && !errors.Is(runErr, context.Canceled) {
 		deps.RecordOneShotOutcome(role, task, ag.Model, ag.TotalCost, runErr == nil)
 	}
 	// On a fatal error res is nil, but the agent still counted its loop iterations —
@@ -664,6 +689,7 @@ Commands:
   research  Read-only web research with grounded, cited search
   ask       Plain chat, no tools
   models    List model families and their per-role models
+  skills    Inspect local skills offline: skills list [--verbose] [--json]
   bench     Execution-grounded self-eval over built-in fixtures (use --families a,b)
   runs      List recorded do-runs (tasks, steps, cost) newest first
   replay    Replay a run's event trace + cache-hit summary: replay <run-id>

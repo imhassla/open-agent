@@ -280,6 +280,7 @@ func runWithVerify(ctx context.Context, d *Deps, t Task, inputs map[string]Artif
 		t.Class = classifyTask(t.Role, t.Goal, t.Acceptance)
 	}
 	art, err := run(ctx, d, t, inputs, bud)
+	t = taskWithSkillSources(t, art.WorkflowContext)
 	if err != nil {
 		recordWorkerError(d, t, art, err)
 		return art, err
@@ -321,6 +322,7 @@ func runWithVerify(ctx context.Context, d *Deps, t Task, inputs map[string]Artif
 			changedFilesHint() +
 			"\n\nBuild on your previous changes (they are still on disk) — fix the specific failure above so verification passes; do not start over."
 		art, err = run(ctx, d, retryTask, inputs, bud)
+		t = taskWithSkillSources(t, art.WorkflowContext)
 		if err != nil {
 			recordWorkerError(d, t, art, err)
 			return art, err

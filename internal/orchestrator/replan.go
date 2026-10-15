@@ -2,10 +2,13 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/imhassla/open-agent/internal/agent"
 	"github.com/imhassla/open-agent/internal/budget"
 	"github.com/imhassla/open-agent/internal/event"
+	"github.com/imhassla/open-agent/internal/skills"
 )
 
 // maxReplanDepth bounds how deep a failed task may be re-decomposed. One level is
@@ -25,11 +28,36 @@ type Replanner func(ctx context.Context, d *Deps, t Task, failure string) (*Plan
 // the caller re-asserts it on the final result, so both the sub-plan's own gates
 // and the original contract hold.
 func DefaultReplanner(ctx context.Context, d *Deps, t Task, failure string) (*Plan, error) {
-	goal := "A previous attempt to accomplish the following task FAILED verification. " +
+	goal := replanningGoal(t, failure)
+	request := skills.Request{}
+	if t.Request != nil {
+		request = *t.Request
+	}
+	catalog := discoverSkillCatalog()
+	prepared, err := agent.PrepareSkillContinuation(catalog, request)
+	if err != nil {
+		return nil, err
+	}
+	request = prepared.Request
+	reference, err := planningRequestText(goal, request, prepared.Context)
+	if err != nil {
+		return nil, err
+	}
+	prepared.EmitLoads(d.Emit, t.ID)
+	rt, _ := d.route(RolePlan)
+	p, err := makePlanWithRoute(ctx, d.Client, rt, goal, nil, reference)
+	if err != nil {
+		p = singleTaskPlan(goal)
+	}
+	p.Request = &request
+	return p, nil
+}
+
+func replanningGoal(t Task, failure string) string {
+	return "A previous attempt to accomplish the following task FAILED verification. " +
 		"Take a genuinely DIFFERENT approach (different decomposition, tools, or strategy).\n\n" +
 		"TASK:\n" + t.Goal +
 		"\n\nWHY THE PREVIOUS ATTEMPT FAILED:\n" + failure
-	return MakePlan(ctx, d, goal)
 }
 
 // runTaskWithReplan runs a task through the verifier (with Reflexion retries) and,
@@ -39,6 +67,7 @@ func DefaultReplanner(ctx context.Context, d *Deps, t Task, failure string) (*Pl
 // acceptance on the synthesized result before accepting it.
 func runTaskWithReplan(ctx context.Context, d *Deps, t Task, inputs map[string]Artifact, bud *budget.Budget, run Runner, cfg RunConfig, retries int, sem chan struct{}, depth int) (Artifact, error) {
 	art, err := runWithVerify(ctx, d, t, inputs, bud, run, cfg.Verifier, retries)
+	t = taskWithSkillSources(t, art.WorkflowContext)
 	if err == nil || cfg.Replanner == nil || depth >= maxReplanDepth {
 		return art, err
 	}
@@ -51,13 +80,34 @@ func runTaskWithReplan(ctx context.Context, d *Deps, t Task, inputs map[string]A
 	// saw, so the sub-plan isn't under-specified.
 	enriched := t
 	enriched.Goal = buildTaskPrompt(t, inputs)
+	// Complete owned reminders before the replanner sees them, then carry that
+	// same source identity into its children. Never trust model-generated request
+	// fields, and do not discard provenance from an actual instruction reload.
+	var continuation agent.PreparedSkillRequest
+	if enriched.Request != nil && enriched.Request.WorkflowContext != "" {
+		catalog := discoverSkillCatalog()
+		prepared, perr := agent.PrepareSkillContinuation(catalog, *enriched.Request)
+		if perr != nil {
+			return art, errors.Join(err, fmt.Errorf("replanning failed: %w", perr))
+		}
+		if _, perr := planningRequestText(replanningGoal(enriched, err.Error()), prepared.Request, prepared.Context); perr != nil {
+			return art, errors.Join(err, fmt.Errorf("replanning failed: %w", perr))
+		}
+		continuation = prepared
+		enriched.Request = &prepared.Request
+	}
+	continuation.EmitLoads(d.Emit, t.ID)
 	sub, perr := cfg.Replanner(ctx, d, enriched, err.Error())
-	if perr != nil || sub == nil || len(sub.Tasks) == 0 {
+	if perr != nil {
+		return art, errors.Join(err, fmt.Errorf("replanning failed: %w", perr))
+	}
+	if sub == nil || len(sub.Tasks) == 0 {
 		return art, err
 	}
 	if verr := sub.Validate(); verr != nil {
 		return art, err // never hand a degenerate plan to the executor
 	}
+	sub.Request = enriched.Request // sub-plans cannot invent original user instructions
 
 	// Free our worker slot while the nested run executes, so the replan draws from
 	// the SAME bounded pool instead of adding to it. Re-acquire before returning so
@@ -71,6 +121,9 @@ func runTaskWithReplan(ctx context.Context, d *Deps, t Task, inputs map[string]A
 	if sem != nil {
 		sem <- struct{}{}
 	}
+	if sub.Request != nil {
+		art.WorkflowContext = agent.MergeSkillSources(art.WorkflowContext, sub.Request.WorkflowContext)
+	}
 	if subErr != nil {
 		return art, err // replan failed → keep the original failure
 	}
@@ -80,6 +133,9 @@ func runTaskWithReplan(ctx context.Context, d *Deps, t Task, inputs map[string]A
 		return art, err
 	}
 	final.TaskID, final.Role = t.ID, t.Role
+	if sub.Request != nil {
+		final.WorkflowContext = agent.MergeSkillSources(sub.Request.WorkflowContext, final.WorkflowContext)
+	}
 	// Fold the whole sub-plan's spend into the lifted artifact so per-task/per-role
 	// cost attribution isn't under-reported (the budget ledger already had it).
 	final.Tokens, final.Cost = 0, 0

@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -10,17 +11,20 @@ import (
 	"github.com/imhassla/open-agent/internal/agent"
 	"github.com/imhassla/open-agent/internal/budget"
 	"github.com/imhassla/open-agent/internal/llm"
+	"github.com/imhassla/open-agent/internal/skills"
 	"github.com/imhassla/open-agent/internal/telemetry"
 )
 
 // Options tune a single worker build.
 type Options struct {
-	ModelOverride string
-	MaxSteps      int
-	Verbose       bool
-	Streaming     bool
-	StreamOut     io.Writer
-	Budget        *budget.Budget // shared run budget (also charges in-tool sub-calls like code_consensus)
+	Request          *skills.Request // nil: Send receives original user text; non-nil: retain its provenance separately
+	InheritedRequest bool            // delegated workers retain intent but load parent bodies lazily
+	ModelOverride    string
+	MaxSteps         int
+	Verbose          bool
+	Streaming        bool
+	StreamOut        io.Writer
+	Budget           *budget.Budget // shared run budget (also charges in-tool sub-calls like code_consensus)
 
 	// Class is the #17 rating bucket dimension for the worker-model PICK. "" (ClassAny)
 	// → the bare role bucket (identical to pre-#17 per-role routing). Set by
@@ -199,9 +203,25 @@ func BuildWorker(role Role, d *Deps, o Options) (*agent.Agent, error) {
 	// approves each edit before it writes. nil ApproveEdit → no-op (one-shot/DAG/auto
 	// unchanged). Mutually exclusive with RequireApply by construction (see Options).
 	reg := RegistryFor(role, d, o.Budget)
+	var catalog *skills.Catalog
+	if role == RoleAsk || role == RoleCode || role == RoleResearch {
+		catalog = discoverSkillCatalog()
+		page, err := catalog.List("")
+		if err != nil {
+			return nil, err
+		}
+		data, err := json.Marshal(page)
+		if err != nil {
+			return nil, err
+		}
+		preamble += "\n\nLocal skills (metadata only):\n" + string(data) +
+			"\nUse skills_list to page the catalog and skill_view to read relevant procedures before following them. " +
+			"Named reads use bundle-relative paths; shell resources use the reported execution_dir (base_dir on the host). The task working directory stays unchanged. " +
+			"Loading is a read, and preserves this role's capabilities and the user's task."
+	}
 	agent.GateEdits(reg, o.ApproveEdit)
 
-	return &agent.Agent{
+	worker := &agent.Agent{
 		Client: d.Client,
 		// Apply guard (gated code tasks only): enforced via Options.RequireApply, which
 		// DefaultRunner sets for orchestrator RoleCode tasks. The REPL and one-shot
@@ -222,5 +242,9 @@ func BuildWorker(role Role, d *Deps, o Options) (*agent.Agent, error) {
 		StreamOut:    o.StreamOut,
 		Emit:         d.Emit,
 		Budget:       o.Budget,
-	}, nil
+	}
+	if catalog != nil {
+		worker.ConfigureSkills(catalog, o.Request, o.InheritedRequest)
+	}
+	return worker, nil
 }

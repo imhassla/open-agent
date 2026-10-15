@@ -8,11 +8,13 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unicode/utf8"
 
 	"github.com/imhassla/open-agent/internal/agent"
 	"github.com/imhassla/open-agent/internal/budget"
 	"github.com/imhassla/open-agent/internal/event"
+	"github.com/imhassla/open-agent/internal/skills"
 )
 
 // Runner executes one task given its dependency artifacts. Injectable so tests
@@ -28,8 +30,11 @@ const spawnChildMaxSteps = 20
 // (drawing from the shared run budget via a capped child budget) and runs it.
 // Children get no spawn tool, so delegation is bounded to one level.
 type subagentSpawner struct {
-	d   *Deps
-	bud *budget.Budget
+	d       *Deps
+	bud     *budget.Budget
+	request *skills.Request
+	parent  *agent.Agent
+	nextID  atomic.Uint64
 }
 
 func (s *subagentSpawner) Spawn(ctx context.Context, goal, role string) (string, error) {
@@ -44,11 +49,26 @@ func (s *subagentSpawner) Spawn(ctx context.Context, goal, role string) (string,
 	// No Options.Class: a spawned subagent is not the gated/recorded task, so it
 	// routes under the bare role bucket (#17). Deliberate — only runWithVerify-gated
 	// tasks contribute to and consume the per-class rating signal.
-	child, err := BuildWorker(r, s.d, Options{Budget: childBud})
+	request := skills.Request{}
+	if s.request != nil {
+		request = *s.request
+	}
+	if s.parent != nil {
+		request.WorkflowContext = agent.WorkflowContext(s.parent.SkillHistory())
+	}
+	request.ReferenceContext = ""
+	child, err := BuildWorker(r, s.d, Options{Budget: childBud, Request: &request, InheritedRequest: true})
 	if err != nil {
 		return "", err
 	}
+	child.Label = fmt.Sprintf("spawn-%d", s.nextID.Add(1))
+	if s.parent != nil && s.parent.Label != "" {
+		child.Label = s.parent.Label + "/" + child.Label
+	}
 	res, err := child.Run(ctx, goal)
+	if s.parent != nil {
+		s.parent.RememberSkillSources(agent.WorkflowContext(child.SkillHistory()))
+	}
 	if err != nil {
 		return "", err
 	}
@@ -66,13 +86,18 @@ func DefaultRunner(ctx context.Context, d *Deps, t Task, inputs map[string]Artif
 	// onto the enriched retry task), so the worker PICK bucket matches the gate
 	// RECORD bucket. "" (one-shot/test runners that bypass runWithVerify) → role bucket.
 	// RequireApply only for gated code tasks (not the REPL/spawn paths).
-	ag, err := BuildWorker(t.Role, d, Options{Budget: bud, Class: t.Class, RequireApply: t.Role == RoleCode, ModelOverride: t.ForceModel})
+	request := skills.Request{}
+	if t.Request != nil {
+		request = *t.Request
+	}
+	request.ReferenceContext = "" // child bodies stay lazy; original intent and source reminders travel
+	ag, err := BuildWorker(t.Role, d, Options{Budget: bud, Class: t.Class, RequireApply: t.Role == RoleCode, ModelOverride: t.ForceModel, Request: &request, InheritedRequest: true})
 	if err != nil {
 		return Artifact{}, err
 	}
 	ag.Label = t.ID
 	if t.Role == RoleCode {
-		agent.RegisterSpawn(ag.Registry, &subagentSpawner{d: d, bud: bud})
+		agent.RegisterSpawn(ag.Registry, &subagentSpawner{d: d, bud: bud, request: &request, parent: ag})
 	}
 	if len(inputs) > 0 {
 		in := inputs // capture
@@ -86,17 +111,23 @@ func DefaultRunner(ctx context.Context, d *Deps, t Task, inputs map[string]Artif
 		// Carry the worker identity + spend on the error path so runWithVerify can
 		// record this as a rating failure for (role, class, model) — otherwise an
 		// error-prone model is never penalized and the router keeps re-picking it.
-		return Artifact{TaskID: t.ID, Role: t.Role, Model: ag.Model, Tokens: ag.TotalTokens, Cost: ag.TotalCost}, err
+		// Failures before Chat provide no model outcome.
+		model := ag.Model
+		if ag.StepsTaken == 0 {
+			model = ""
+		}
+		return Artifact{TaskID: t.ID, Role: t.Role, Model: model, Tokens: ag.TotalTokens, Cost: ag.TotalCost, WorkflowContext: agent.WorkflowContext(ag.SkillHistory())}, err
 	}
 	return Artifact{
-		TaskID:  t.ID,
-		Role:    t.Role,
-		Model:   ag.Model,
-		Content: res.Answer,
-		Summary: boundedSummary(res.Answer),
-		Tokens:  ag.TotalTokens,
-		Cost:    ag.TotalCost,
-		Applied: res.Applied, // worker-local "wrote a change" signal (telemetry/inspection; the verifier backstop gates on treeClean, NOT this)
+		WorkflowContext: agent.WorkflowContext(ag.SkillHistory()),
+		TaskID:          t.ID,
+		Role:            t.Role,
+		Model:           ag.Model,
+		Content:         res.Answer,
+		Summary:         boundedSummary(res.Answer),
+		Tokens:          ag.TotalTokens,
+		Cost:            ag.TotalCost,
+		Applied:         res.Applied, // worker-local "wrote a change" signal (telemetry/inspection; the verifier backstop gates on treeClean, NOT this)
 	}, nil
 }
 
@@ -317,6 +348,16 @@ func runCore(ctx context.Context, d *Deps, p *Plan, bb *Blackboard, bud *budget.
 					inputs[dep] = a
 				}
 			}
+			request := skills.Request{}
+			if p.Request != nil {
+				request = *p.Request
+			}
+			var contexts []string
+			for _, dep := range t.Deps {
+				contexts = append(contexts, inputs[dep].WorkflowContext)
+			}
+			request.WorkflowContext = agent.MergeSkillSources(request.WorkflowContext, contexts...)
+			t.Request = &request
 			wg.Add(1)
 			n++
 			go func(t Task, inputs map[string]Artifact) {
@@ -344,6 +385,13 @@ func runCore(ctx context.Context, d *Deps, p *Plan, bb *Blackboard, bud *budget.
 		inflight--
 		mu.Lock()
 		running[r.id] = false
+		// Failed attempts are not completed artifacts, but their owned reads
+		// still belong to the run's continuing request and saved resume state.
+		if p.Request != nil {
+			request := *p.Request
+			request.WorkflowContext = agent.MergeSkillSources(request.WorkflowContext, r.art.WorkflowContext)
+			p.Request = &request
+		}
 		if r.err != nil {
 			// A genuine cancel/deadline tears the run down: abort, never degrade/skip
 			// (re-dispatching into a dead ctx is unsafe).

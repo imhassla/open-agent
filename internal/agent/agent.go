@@ -27,7 +27,8 @@ type Agent struct {
 	TopP         float64 // 0 = provider default
 	TopK         int     // 0 = provider default
 	System       string
-	Preamble     string // per-run context (e.g. telemetry hints) injected as the first user turn, NOT into the cached system prefix
+	Preamble     string                       // per-run context (e.g. telemetry hints) injected as the first user turn, NOT into the cached system prefix
+	PrepareInput func(string) (string, error) // optional task reference context; preserves original input separately
 	Registry     *Registry
 	MaxSteps     int
 	Verbose      bool
@@ -61,6 +62,11 @@ type Agent struct {
 	poisonNudges int        // poisoned-tool-call recoveries this Send (bounded to 1)
 	editsApplied int        // successful mutating tool calls this Send (envelope observability)
 
+	skillMu        sync.Mutex
+	skillMemory    skillMemory   // reference context mirrored from the transcript, never an activation database
+	skillTurn      []llm.Message // named context and reads from the current turn for session folding
+	skillExecution string        // current turn mappings, kept separate from historical bodies
+
 	// StepsTaken counts loop iterations of the LAST Send, surviving a fatal error
 	// (a nil Result) — so telemetry records how far a dead run actually got instead
 	// of a misleading 0.
@@ -77,6 +83,7 @@ const maxApplyNudges = 1
 // unified session (#18) owns one canonical transcript and uses this to carry context
 // across the ephemeral per-turn worker it builds for each turn's intent/role.
 func (a *Agent) LoadHistory(prior []llm.Message) {
+	a.restoreSkillMemory(prior)
 	a.msgs = make([]llm.Message, 0, len(prior)+2)
 	a.msgs = append(a.msgs, llm.Message{Role: "system", Content: a.System})
 	if a.Preamble != "" {
@@ -127,6 +134,11 @@ type Result struct {
 
 // Reset clears conversation history (keeps config), starting a fresh session.
 func (a *Agent) Reset() {
+	a.skillMu.Lock()
+	a.skillMemory = skillMemory{}
+	a.skillTurn = nil
+	a.skillExecution = ""
+	a.skillMu.Unlock()
 	a.msgs = nil
 	a.ToolErrors = nil
 	a.applied = false
@@ -153,6 +165,14 @@ func (a *Agent) Run(ctx context.Context, task string) (*Result, error) {
 // the model answers or final_answer fires, and returns the result. History is
 // retained across calls so the agent has full context on the next turn.
 func (a *Agent) Send(ctx context.Context, userInput string) (*Result, error) {
+	inputContext := ""
+	if a.PrepareInput != nil {
+		var err error
+		inputContext, err = a.PrepareInput(userInput)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if len(a.msgs) == 0 {
 		// System stays byte-identical across runs so the provider can cache the
 		// prefix; per-run hints go in a separate first user turn (Preamble).
@@ -161,6 +181,23 @@ func (a *Agent) Send(ctx context.Context, userInput string) (*Result, error) {
 			a.msgs = append(a.msgs, llm.Message{Role: "user", Content: a.Preamble})
 		}
 	}
+	// Reused workers replace transient mappings instead of retaining stale paths
+	// on every Send. PrepareInput still returns the complete current context.
+	for i := len(a.msgs) - 1; i >= 0; i-- {
+		if a.msgs[i].Name == "skill_execution" {
+			a.msgs = append(a.msgs[:i], a.msgs[i+1:]...)
+		}
+	}
+	inputContext = strings.TrimSuffix(inputContext, a.skillExecution)
+	if a.skillExecution != "" {
+		a.msgs = append(a.msgs, llm.Message{Role: "user", Name: "skill_execution", Content: a.skillExecution})
+	}
+	if inputContext != "" {
+		a.msgs = append(a.msgs, llm.Message{Role: "user", Name: "skill_context", Content: inputContext})
+	}
+	// Each reminder already contains the full original-instruction history.
+	// Retain one current copy rather than every obsolete prefix.
+	a.msgs = WithSkillReminder(a.msgs, a.skillReminder())
 	a.msgs = append(a.msgs, llm.Message{Role: "user", Content: userInput})
 
 	// Per-Send apply tracking (RequireApply). Reset each turn so a multi-turn REPL

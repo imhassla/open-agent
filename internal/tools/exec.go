@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -31,6 +32,17 @@ var active Sandbox = HostSandbox{}
 // SetSandbox swaps the active sandbox.
 func SetSandbox(s Sandbox) {
 	if s != nil {
+		switch docker := s.(type) {
+		case DockerSandbox:
+			if docker.mounts == nil {
+				docker.mounts = &skillMounts{bundles: make(map[string]string)}
+			}
+			s = docker
+		case *DockerSandbox:
+			if docker.mounts == nil {
+				docker.mounts = &skillMounts{bundles: make(map[string]string)}
+			}
+		}
 		active = s
 	}
 }
@@ -109,6 +121,7 @@ type DockerSandbox struct {
 	Image  string // default alpine:3.20
 	CPUs   string // default "2"
 	Memory string // default "2g"
+	mounts *skillMounts
 }
 
 func (d DockerSandbox) Run(ctx context.Context, command string, timeoutSec int) (string, error) {
@@ -124,6 +137,15 @@ func (d DockerSandbox) RunInDir(ctx context.Context, dir, command string, timeou
 		}
 		mountDir = wd
 	}
+	var err error
+	mountDir, err = filepath.Abs(mountDir)
+	if err != nil {
+		return "", err
+	}
+	mountDir, err = filepath.EvalSymlinks(mountDir)
+	if err != nil {
+		return "", err
+	}
 	image := d.Image
 	if image == "" {
 		image = "alpine:3.20"
@@ -136,9 +158,10 @@ func (d DockerSandbox) RunInDir(ctx context.Context, dir, command string, timeou
 	if mem == "" {
 		mem = "2g"
 	}
-	return execCapture(ctx, timeoutSec, "",
-		"docker", "run", "--rm", "--network", "none", "--cpus", cpus, "--memory", mem,
-		"-v", mountDir+":/work", "-w", "/work", image, "sh", "-lc", command)
+	args := []string{"run", "--rm", "--network", "none", "--cpus", cpus, "--memory", mem}
+	args = append(args, d.skillMountArgs(mountDir)...)
+	args = append(args, "-w", "/work", image, "sh", "-lc", command)
+	return execCapture(ctx, timeoutSec, "", "docker", args...)
 }
 
 // DockerAvailable reports whether the docker CLI is on PATH.

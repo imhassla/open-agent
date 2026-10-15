@@ -13,13 +13,14 @@ import (
 // (artifacts-by-reference) — workers fetch the full Content on demand via the
 // read_artifact tool, keeping the orchestrator/synthesizer context small.
 type Artifact struct {
-	TaskID  string  `json:"task_id"`
-	Role    Role    `json:"role"`
-	Model   string  `json:"model"`
-	Content string  `json:"content"`
-	Summary string  `json:"summary,omitempty"`
-	Tokens  int     `json:"tokens"`
-	Cost    float64 `json:"cost"`
+	WorkflowContext string  `json:"workflow_context,omitempty"` // owned reference metadata, separate from model-generated Content
+	TaskID          string  `json:"task_id"`
+	Role            Role    `json:"role"`
+	Model           string  `json:"model"`
+	Content         string  `json:"content"`
+	Summary         string  `json:"summary,omitempty"`
+	Tokens          int     `json:"tokens"`
+	Cost            float64 `json:"cost"`
 	// Applied is the worker's "I wrote a file change" signal (RequireApply code tasks),
 	// recorded for telemetry/checkpoint inspection — the verifier's no-op backstop gates
 	// on treeClean, NOT this field (nothing reads it in production). omitempty + tolerant

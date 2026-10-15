@@ -14,6 +14,7 @@ import (
 	"github.com/imhassla/open-agent/internal/budget"
 	"github.com/imhassla/open-agent/internal/llm"
 	"github.com/imhassla/open-agent/internal/orchestrator"
+	"github.com/imhassla/open-agent/internal/skills"
 	"github.com/imhassla/open-agent/internal/tools"
 )
 
@@ -122,6 +123,9 @@ func runImprove(deps *orchestrator.Deps, opts options, focus string) {
 		ag, err := orchestrator.BuildWorker(orchestrator.RoleCode, deps, orchestrator.Options{
 			MaxSteps: 14, Budget: bud, RequireApply: true,
 			Class: orchestrator.ClassifyGoal(orchestrator.RoleCode, task),
+			// Findings are generated context. Only the original human focus may
+			// request a user-only procedure or grant named-helper eligibility.
+			Request: &skills.Request{Instructions: focus, Context: task},
 		})
 		if err != nil {
 			res.Detail = "worker build: " + err.Error()
