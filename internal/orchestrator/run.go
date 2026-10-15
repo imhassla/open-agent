@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unicode/utf8"
 
 	"github.com/imhassla/open-agent/internal/agent"
@@ -251,6 +252,13 @@ type RunConfig struct {
 	Verifier      Verifier  // optional per-task verification gate (nil = no gate)
 	VerifyRetries int       // bounded Reflexion retries on verification failure (default 1)
 	Replanner     Replanner // optional: re-decompose a task that exhausts retries (nil = abort)
+
+	// OnProgress, when non-nil, receives a periodic heartbeat snapshot of the
+	// TOP-LEVEL plan (nested replans stay folded into their parent task's
+	// "running" state). Delivered from a dedicated goroutine every
+	// ProgressInterval; guaranteed to stop before Run returns.
+	OnProgress       func(Progress)
+	ProgressInterval time.Duration // heartbeat period (<=0 → DefaultProgressInterval)
 }
 
 // Run executes the plan: fan dependency-ready tasks onto a bounded worker pool,
@@ -379,6 +387,39 @@ func runCore(ctx context.Context, d *Deps, p *Plan, bb *Blackboard, bud *budget.
 
 	var ctxErr error               // a genuine cancel/deadline aborts the whole run
 	failures := map[string]error{} // failed task id → error (its subtree is skipped)
+
+	// Heartbeat (top-level plan only): the snapshot reads the SAME maps the
+	// scheduler dispatches by, under the same mu, so counts cannot drift. The
+	// pinned settled-failed entries in `running` are reclassified via `failures`.
+	// stopProgress is synchronous (waits for the ticker goroutine), so no
+	// heartbeat can print after runCore returns.
+	if depth == 0 && cfg.OnProgress != nil {
+		start := time.Now()
+		snap := func() Progress {
+			mu.Lock()
+			defer mu.Unlock()
+			pr := Progress{Total: len(p.Tasks), Elapsed: time.Since(start), CostUSD: bud.CostUSD()}
+			if hr, bounded := bud.CostHeadroom(); bounded {
+				pr.CostCapUSD = pr.CostUSD + hr
+			}
+			for _, t := range p.Tasks {
+				switch {
+				case done[t.ID]:
+					pr.Done++
+				case failures[t.ID] != nil:
+					pr.Failed++
+				case running[t.ID]:
+					pr.Running++
+					pr.RunningIDs = append(pr.RunningIDs, t.ID)
+				}
+			}
+			sort.Strings(pr.RunningIDs)
+			return pr
+		}
+		stopProgress := startProgress(cfg.ProgressInterval, cfg.OnProgress, snap)
+		defer stopProgress()
+	}
+
 	inflight := dispatch()
 	for inflight > 0 {
 		r := <-resCh

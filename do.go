@@ -44,6 +44,18 @@ func (e *taskEmitter) Emit(ev event.Event) {
 	}
 }
 
+// PrintProgress renders the periodic do-run heartbeat line on stderr. It shares
+// the emitter's mutex so a heartbeat never interleaves with a task event line
+// (and each write is a single Fprintf, so it lands as one atomic-enough write).
+// Implementing this method is what opts a renderer into heartbeats — see
+// executePlan; the session renderer doesn't implement it, so non-do paths stay
+// silent.
+func (e *taskEmitter) PrintProgress(p orchestrator.Progress) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	fmt.Fprintln(os.Stderr, orchestrator.FormatProgress(p))
+}
+
 // buildOrResumePlan produces (or resumes) a run's plan + blackboard, allocating the
 // shared budget and the run directory. It is the planning half of an orchestration,
 // shared by the `do` subcommand and the interactive session (epic #18). Returns an
@@ -112,12 +124,25 @@ func executePlan(ctx context.Context, deps *orchestrator.Deps, plan *orchestrato
 	deps.Emit = event.NewBus(render.Emit, event.StampRunID(runID, event.JSONLSink(filepath.Join(dir, "events.jsonl"))))
 	defer func() { deps.Emit = prev }()
 
+	// Heartbeat for long runs: every ~30s one situation line to stderr (elapsed,
+	// task counts, running labels, spend vs cap). Opt-in by renderer capability:
+	// only renderers implementing PrintProgress (the `do` taskEmitter — both
+	// interactive and --json, where stderr is the designated progress channel)
+	// get it; the session renderer doesn't, so the REPL path stays silent.
+	// OPEN_AGENT_NO_PROGRESS=1 is the kill-switch (env convention, cf.
+	// OPEN_AGENT_NO_GUARDRAILS).
+	var onProgress func(orchestrator.Progress)
+	if pp, ok := render.(interface{ PrintProgress(orchestrator.Progress) }); ok && os.Getenv("OPEN_AGENT_NO_PROGRESS") != "1" {
+		onProgress = pp.PrintProgress
+	}
+
 	fmt.Fprintln(os.Stderr, "executing…")
 	runErr = orchestrator.Run(ctx, deps, plan, bb, bud, orchestrator.RunConfig{
 		Concurrency:   4,
 		Verifier:      orchestrator.NewVerifier(deps, ".", bud),
 		VerifyRetries: 1,
 		Replanner:     orchestrator.DefaultReplanner,
+		OnProgress:    onProgress,
 	})
 	if plan.Request != nil {
 		snapshot := bb.Snapshot()
