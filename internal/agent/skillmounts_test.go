@@ -49,7 +49,9 @@ func (f skillMountFixture) add(t *testing.T, folder, name string) {
 
 func (f skillMountFixture) overlays(t *testing.T) map[string]bool {
 	t.Helper()
-	if _, err := tools.BashExec(context.Background(), "true", 5); err != nil {
+	// 30s, not 5: the command is a stub-docker `true` (instant alone), but under
+	// the full suite's parallel load a 5s cap flaked on process-spawn latency.
+	if _, err := tools.BashExec(context.Background(), "true", 30); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(f.capture)

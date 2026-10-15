@@ -286,7 +286,9 @@ func TestScheduledVerbsPreserveStoredRequestsAndSeparateUpstreamOutput(t *testin
 	t.Setenv("OPEN_AGENT_SKILLS_EXPECT_UPSTREAM", upstream)
 	for _, verb := range []string{"code", "ask", "research", "do"} {
 		for i, task := range []string{"/review answer the question", "Answer /review this question", "Answer the question using /skill:review", "Answer using the review skill", "--literal flag-looking task using /review", "Summarize these results"} {
-			if i == 5 {
+			if i == 3 || i == 5 {
+				// i==3 is a plain-language mention: it loads the reference body
+				// but grants no named-request standing (review F3).
 				t.Setenv("OPEN_AGENT_SKILLS_EXPECT_REQUESTED", "0")
 			} else {
 				t.Setenv("OPEN_AGENT_SKILLS_EXPECT_REQUESTED", "1")
@@ -425,6 +427,10 @@ func TestScheduledSkillFailureDoesNotAbortOtherJobs(t *testing.T) {
 			case "crashed_process":
 				t.Setenv("OPEN_AGENT_SKILLS_TEST_CRASH", "1")
 			case "different_cwd":
+				// A bare /review is prose under the request contract; only the
+				// strict namespaced form still fails fast when the stored cwd
+				// no longer carries the bundle.
+				task = "Use /skill:review"
 				t.Chdir(t.TempDir())
 			}
 			failed := &schedule.Job{ID: "failed", Verb: "ask", Task: task, MaxCost: 0.05}

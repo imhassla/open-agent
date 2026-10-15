@@ -267,7 +267,7 @@ func TestSpawnedWorkerInheritsNamedWorkflowAndReturnsSourceContext(t *testing.T)
 	project, home := t.TempDir(), t.TempDir()
 	t.Chdir(project)
 	t.Setenv("HOME", home)
-	for name, body := range map[string]string{"workflow": "Parent body should remain lazy.", "helper": "Spawned helper evidence."} {
+	for name, body := range map[string]string{"workflow": "Parent body should remain lazy. Use the helper skill for evidence.", "helper": "Spawned helper evidence."} {
 		dir := filepath.Join(project, ".agents", "skills", name)
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			t.Fatal(err)
@@ -420,7 +420,7 @@ func TestFailedAttemptsCarryReadHelpersThroughRetryAndReplan(t *testing.T) {
 	project, home := t.TempDir(), t.TempDir()
 	t.Chdir(project)
 	t.Setenv("HOME", home)
-	for name, body := range map[string]string{"workflow": "Original planning procedure.", "helper": "Required helper planning instructions."} {
+	for name, body := range map[string]string{"workflow": "Original planning procedure. Load the helper skill when needed.", "helper": "Required helper planning instructions."} {
 		dir := filepath.Join(project, ".agents", "skills", name)
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			t.Fatal(err)
@@ -683,7 +683,7 @@ func TestDelegatedSkillPreparationDoesNotRateAnUncalledModel(t *testing.T) {
 			if outcome == "missing_skill" {
 				// A fresh inherited request still needs name validation; an owned
 				// reminder from earlier planning keeps its recorded source instead.
-				p.Request = &skills.Request{Instructions: "Use /workflow"}
+				p.Request = &skills.Request{Instructions: "Use /skill:workflow"}
 			}
 			err = Run(context.Background(), d, p, NewBlackboard(""), budget.New(10, 0, 0, 0), RunConfig{Concurrency: 1, Verifier: contentVerifier{}})
 			stat, rated := rating.Open(filepath.Join(home, "ratings.json")).Get("ask", worker.Model)
@@ -960,7 +960,7 @@ func TestMissingHomeStillRejectsUnavailableNamedSkill(t *testing.T) {
 		return nil, nil
 	}}
 	d := testDeps(t, model)
-	goal := "Use /missing-procedure"
+	goal := "Use /skill:missing-procedure"
 	worker, err := BuildWorker(RoleAsk, d, Options{MaxSteps: 2})
 	if err != nil {
 		t.Fatal(err)

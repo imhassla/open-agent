@@ -2,7 +2,6 @@ package skills
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -21,8 +20,12 @@ type Request struct {
 
 type Prepared struct {
 	Request
-	Names     []string
-	Reference string
+	Names []string
+	// ExplicitNames is the subset of Names the user slash-invoked (/name or
+	// /skill:name). Only these carry named-request standing for user-only
+	// skills; plain-language mentions load reference bodies without it.
+	ExplicitNames []string
+	Reference     string
 }
 
 const RequiredContextBytes = 48000
@@ -49,11 +52,19 @@ func IsBuiltin(name string) bool {
 
 // Include Unicode separators and non-ASCII whitespace at both token boundaries.
 var slashReference = regexp.MustCompile(`(?:^|[\s\v\p{Z}\x{0085}("'\x60\[])(/([^\s\v\p{Z}\x{0085}]+))`)
-var conventionalReference = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 
 type reference struct {
 	name     string
 	position int
+	// explicit marks a slash invocation (/name or /skill:name) as opposed to a
+	// plain-language mention of a known name. Only explicit references grant
+	// named-request standing; mentions may load reference bodies but carry no
+	// extra authority (review F3).
+	explicit bool
+	// namespaced marks the strict /skill:name form, whose resolution failures
+	// stay loud. A bare unknown /token is ordinary prose (/login, /api — review
+	// F1) and is skipped during scanning instead of failing the run.
+	namespaced bool
 }
 
 // references handles names, not intent. Use/explain/negate stays in the complete
@@ -77,20 +88,16 @@ func (c *Catalog) references(text string) []reference {
 			name = name[:len(name)-size]
 		}
 		if !namespaced && len(c.entries[name]) == 0 {
-			if strings.ContainsAny(name, "/\\.") || !conventionalReference.MatchString(name) {
-				continue
-			}
-			// A single-component absolute path has the same spelling as a bare
-			// command. Existing paths remain paths; /skill:name forces resolution.
-			// Known skill identities above retain their explicit invocation meaning.
-			if _, err := os.Lstat("/" + name); err == nil {
-				continue
-			}
+			// A bare /token that names no known skill is ordinary prose — route
+			// paths (/login, /api, /healthz), absolute paths, flags. Treating it
+			// as a failed skill request killed real runs before any model call
+			// (review F1). /skill:name stays strict below.
+			continue
 		}
 		if !namespaced && IsBuiltin(name) {
 			continue
 		}
-		refs = append(refs, reference{name, match[2]})
+		refs = append(refs, reference{name: name, position: match[2], explicit: true, namespaced: namespaced})
 	}
 	for _, name := range c.names() {
 		for offset := 0; offset < len(text); {
@@ -110,7 +117,7 @@ func (c *Catalog) references(text string) []reference {
 				after = !nameRune(r) && !strings.ContainsRune("/\\", r) && !(r == '.' && end+1 < len(text) && nameRune(rune(text[end+1])))
 			}
 			if before && after {
-				refs = append(refs, reference{name, i})
+				refs = append(refs, reference{name: name, position: i})
 			}
 			offset = end
 		}
@@ -121,30 +128,74 @@ func (c *Catalog) references(text string) []reference {
 
 func nameRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-' }
 
-// Prepare loads distinct named references in first-mention order. Bodies are
-// reference material, not unconditional commands. Helpers remain lazy reads.
-func (c *Catalog) RequestedNames(instructions string) ([]string, error) {
-	var names []string
+// RequestedNames scans instructions and returns distinct loadable names in
+// first-mention order, plus the subset that was EXPLICITLY slash-invoked.
+// Bodies are reference material, not unconditional commands; helpers remain
+// lazy reads. Resolution failures are loud only where the user was explicit
+// (/name of a known-but-ambiguous skill, any /skill:name): an ambiguous
+// plain-language mention is skipped rather than failing the run.
+func (c *Catalog) RequestedNames(instructions string) (names, explicit []string, err error) {
 	seen := make(map[string]bool)
 	for _, ref := range c.references(instructions) {
 		if seen[ref.name] {
 			continue
 		}
-		seen[ref.name] = true
-		if _, err := c.Resolve(ref.name); err != nil {
-			return nil, err
+		if _, rerr := c.Resolve(ref.name); rerr != nil {
+			if ref.explicit {
+				return nil, nil, rerr
+			}
+			continue
 		}
+		seen[ref.name] = true
+		names = append(names, ref.name)
+		if ref.explicit {
+			explicit = append(explicit, ref.name)
+		}
+	}
+	return names, explicit, nil
+}
+
+// DeclaredHelpers returns the catalog names referenced from meta's own SKILL.md
+// body (slash invocations or word-bounded known-name mentions): the helpers a
+// workflow declares for itself. Standing semantics live with the caller — only
+// the body of an EXPLICITLY requested skill may extend standing, and the grant
+// is deliberately not transitive (helpers' own bodies are never scanned).
+// Best-effort: an unreadable body declares nothing.
+func (c *Catalog) DeclaredHelpers(meta Metadata) []string {
+	var body strings.Builder
+	for start := 1; ; {
+		v, err := view(meta, "", start, 0)
+		if err != nil || body.Len() > RequiredContextBytes {
+			return nil
+		}
+		body.WriteString(v.Content)
+		if v.NextStart == 0 {
+			break
+		}
+		start = v.NextStart
+	}
+	var names []string
+	seen := map[string]bool{meta.Name: true}
+	for _, ref := range c.references(body.String()) {
+		if seen[ref.name] {
+			continue
+		}
+		if _, err := c.Resolve(ref.name); err != nil {
+			continue
+		}
+		seen[ref.name] = true
 		names = append(names, ref.name)
 	}
-	return names, nil
+	return names
 }
 
 func (c *Catalog) Prepare(request Request) (Prepared, error) {
 	p := Prepared{Request: request}
-	names, err := c.RequestedNames(request.Instructions)
+	names, explicit, err := c.RequestedNames(request.Instructions)
 	if err != nil {
 		return Prepared{}, err
 	}
+	p.ExplicitNames = explicit
 	var sources []Metadata
 	for _, name := range names {
 		meta, _ := c.Resolve(name) // already validated by RequestedNames

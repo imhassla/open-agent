@@ -595,6 +595,11 @@ func parsePlan(content, goal string) (*Plan, error) {
 	if err := json.Unmarshal([]byte(js), &p); err != nil {
 		return nil, fmt.Errorf("invalid JSON: %w", err)
 	}
+	// Plan.Request is tagged for plan.json PERSISTENCE only — provenance must
+	// never arrive from model output. Every current caller overwrites it, but a
+	// future call site that forgets to stamp would otherwise inherit
+	// model-controlled provenance silently (review F4).
+	p.Request = nil
 	if p.Goal == "" {
 		p.Goal = goal
 	}

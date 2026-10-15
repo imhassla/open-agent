@@ -11,7 +11,10 @@ import (
 
 // RegisterSkills adds only named, read-only bundle access. User-only access is
 // supplied by the task's requested workflow, never by automatic discovery.
-func RegisterSkills(reg *Registry, catalog *skills.Catalog, allowUserOnly func() bool, onRead func(skills.View) error) {
+// allowUserOnly receives the RESOLVED metadata of the skill being read, so the
+// caller can scope standing to the explicitly requested skills and their
+// bundles rather than answering globally.
+func RegisterSkills(reg *Registry, catalog *skills.Catalog, allowUserOnly func(skills.Metadata) bool, onRead func(skills.View) error) {
 	reg.Register(Tool{
 		Def: schema("skills_list", "List automatically selectable local skills. Follow next_cursor to read the remaining catalog.",
 			obj(props{"cursor": str("Cursor returned by the previous page (optional)")})),
@@ -33,7 +36,7 @@ func RegisterSkills(reg *Registry, catalog *skills.Catalog, allowUserOnly func()
 			if err != nil {
 				return "", err
 			}
-			if m.UserOnly && (allowUserOnly == nil || !allowUserOnly()) {
+			if m.UserOnly && (allowUserOnly == nil || !allowUserOnly(m)) {
 				return "", fmt.Errorf("skill %q is user-only; it requires a named user request or a helper in a requested workflow", name)
 			}
 			view, err := catalog.View(name, argStr(args, "file_path"), argInt(args, "start"), argInt(args, "end"))

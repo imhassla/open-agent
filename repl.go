@@ -727,6 +727,17 @@ func (s *session) slash(line string) bool {
 			cancel()
 		}
 	default:
+		// A single bare /token that names no known skill is almost certainly a
+		// command typo (/hlep): restore the old discoverability hint instead of
+		// spending a checkpoint + model turn on it (review F5). Multi-word lines
+		// and known skill names still route to the turn as instructions.
+		if len(fields) == 1 {
+			name := strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(cmd, "/"), "skill:"), "/")
+			if _, err := skills.DiscoverCurrent().Resolve(name); err != nil {
+				fmt.Fprintf(os.Stderr, "unknown command %s — /help lists commands, /skills lists skills\n", cmd)
+				return false
+			}
+		}
 		s.checkpointTurn()
 		s.turn(line)
 	}

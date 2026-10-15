@@ -252,7 +252,7 @@ func TestSavedSkillRunResumesUnfinishedWorkerWithOriginalProvenance(t *testing.T
 			root, home := t.TempDir(), t.TempDir()
 			t.Chdir(root)
 			t.Setenv("HOME", home)
-			for name, body := range map[string]string{"workflow": "Historical planning instructions.", "helper": "Requested helper evidence.", "evidence": "Automatic evidence.", "late": "Evidence read by an interrupted worker.", "private": "Unrelated private instructions."} {
+			for name, body := range map[string]string{"workflow": "Historical planning instructions. Load the named helper skill.", "helper": "Requested helper evidence.", "evidence": "Automatic evidence.", "late": "Evidence read by an interrupted worker.", "private": "Unrelated private instructions."} {
 				dir := filepath.Join(root, ".agents", "skills", name)
 				if err := os.MkdirAll(dir, 0755); err != nil {
 					t.Fatal(err)
@@ -433,9 +433,9 @@ func TestFailedSkillStopSurvivesCompactionAndContinuation(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.planning {
-				s.orchestrate(context.Background(), "Stop using /workflow")
+				s.orchestrate(context.Background(), "Stop using /skill:workflow")
 			} else {
-				s.converse(context.Background(), orchestrator.RoleAsk, "Stop using /workflow")
+				s.converse(context.Background(), orchestrator.RoleAsk, "Stop using /skill:workflow")
 			}
 			if len(model.seen) != 1 {
 				t.Fatal("unavailable named skill should fail before a model call")
@@ -461,7 +461,7 @@ func TestFailedSkillStopSurvivesCompactionAndContinuation(t *testing.T) {
 				t.Fatal("continuation did not reach the model")
 			}
 			reminder := agent.WorkflowContext(resumedModel.seen[0])
-			use, stop := strings.Index(reminder, "Use /workflow"), strings.Index(reminder, "Stop using /workflow")
+			use, stop := strings.Index(reminder, "Use /workflow"), strings.Index(reminder, "Stop using /skill:workflow")
 			if use < 0 || stop <= use {
 				t.Fatalf("continuation lost the later stop: %s", reminder)
 			}

@@ -345,7 +345,7 @@ func TestSkillInventorySlashRescansWithoutChangingConversation(t *testing.T) {
 	// Reserving the command must not remove the explicit namespaced escape or
 	// change the user-only skill's eligibility for independent automatic use.
 	catalog := skills.Discover(root, home)
-	names, err := catalog.RequestedNames("Show /skills")
+	names, _, err := catalog.RequestedNames("Show /skills")
 	if err != nil || len(names) != 0 {
 		t.Fatalf("built-in became a skill request: %v %v", names, err)
 	}

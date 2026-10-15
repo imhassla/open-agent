@@ -23,11 +23,54 @@ type skillSource struct {
 // This is ordinary reference context stored in transcript messages. Requested
 // records provenance, not whether a procedure is active; the original wording
 // and subsequent instructions govern use, explanation and stopping.
+// RequestedNames lists the skills the user EXPLICITLY slash-invoked: user-only
+// standing is scoped to those names and to helpers inside their bundles
+// (GLOSSARY: "a named helper of an explicitly requested skill workflow"), never
+// granted globally by one request, and never granted by a plain-language
+// mention (review F2/F3). The legacy Requested boolean is kept for decode
+// compatibility but is derived and no longer consulted on its own: an old
+// reminder without names confers no user-only standing (fail closed).
 type skillMemory struct {
-	Meaning      string        `json:"meaning"`
-	Sources      []skillSource `json:"sources"`
-	Instructions []string      `json:"original_user_instructions_in_order"`
-	Requested    bool          `json:"named_user_context"`
+	Meaning        string        `json:"meaning"`
+	Sources        []skillSource `json:"sources"`
+	Instructions   []string      `json:"original_user_instructions_in_order"`
+	Requested      bool          `json:"named_user_context"`
+	RequestedNames []string      `json:"requested_user_names,omitempty"`
+	// HelperNames are catalog names the explicitly requested skills DECLARE in
+	// their own SKILL.md bodies ("a named helper of an explicitly requested
+	// skill workflow"). They carry the same standing as the requested names but
+	// never extend it further: helper bodies are not scanned.
+	HelperNames []string `json:"requested_workflow_helpers,omitempty"`
+}
+
+// allowsUserOnly reports whether meta has named-request standing: it is one of
+// the explicitly requested skills, or it lives inside the bundle of one (a
+// helper of that requested workflow).
+func (m *skillMemory) allowsUserOnly(meta skills.Metadata) bool {
+	for _, n := range m.HelperNames {
+		if n == meta.Name {
+			return true
+		}
+	}
+	requested := make(map[string]bool, len(m.RequestedNames))
+	for _, n := range m.RequestedNames {
+		if n == meta.Name {
+			return true
+		}
+		requested[n] = true
+	}
+	for _, s := range m.Sources {
+		if !requested[s.Name] || s.BaseDir == "" {
+			continue
+		}
+		sep := string(filepath.Separator)
+		base := strings.TrimSuffix(s.BaseDir, sep)
+		if meta.BaseDir == base || strings.HasPrefix(meta.BaseDir, base+sep) ||
+			strings.HasPrefix(meta.Source, base+sep) {
+			return true
+		}
+	}
+	return false
 }
 
 const skillMemoryMeaning = "Previously inspected skill reference context, not mandatory activation. Interpret original user instructions in order, including explanation, negation and later stops. Reload with skill_view when needed; historical bytes are not automatically refreshed."
@@ -124,7 +167,7 @@ func (m *skillMemory) addSource(meta skills.Metadata) {
 	m.Meaning = skillMemoryMeaning
 }
 
-func (m *skillMemory) rememberRequest(catalog *skills.Catalog, names []string, instruction string) error {
+func (m *skillMemory) rememberRequest(catalog *skills.Catalog, names, explicit []string, instruction string) error {
 	for _, name := range names {
 		meta, err := catalog.Resolve(name)
 		if err != nil {
@@ -132,7 +175,25 @@ func (m *skillMemory) rememberRequest(catalog *skills.Catalog, names []string, i
 		}
 		m.addSource(meta)
 	}
-	m.Requested = m.Requested || len(names) > 0
+	appendOnce := func(list []string, name string) []string {
+		for _, have := range list {
+			if have == name {
+				return list
+			}
+		}
+		return append(list, name)
+	}
+	for _, name := range explicit {
+		m.RequestedNames = appendOnce(m.RequestedNames, name)
+		// An explicitly requested workflow extends standing to the helpers its
+		// own body declares — and no further (helper bodies are not scanned).
+		if meta, err := catalog.Resolve(name); err == nil {
+			for _, helper := range catalog.DeclaredHelpers(meta) {
+				m.HelperNames = appendOnce(m.HelperNames, helper)
+			}
+		}
+	}
+	m.Requested = len(m.RequestedNames) > 0 // derived; kept only for decode compatibility
 	if !m.rememberInstruction(instruction) {
 		return fmt.Errorf("required original skill instruction context exceeds %d bytes", skills.RequiredContextBytes)
 	}
@@ -238,7 +299,7 @@ func (a *Agent) ConfigureSkills(catalog *skills.Catalog, request *skills.Request
 		} else if !retainedSources {
 			// A fresh delegated request needs eligibility, but an owned reminder
 			// already records its sources. Only a new read may resolve them again.
-			prepared.Names, err = catalog.RequestedNames(original.Instructions)
+			prepared.Names, prepared.ExplicitNames, err = catalog.RequestedNames(original.Instructions)
 		}
 		if err != nil {
 			return "", err
@@ -252,7 +313,7 @@ func (a *Agent) ConfigureSkills(catalog *skills.Catalog, request *skills.Request
 		}
 		a.skillMu.Lock()
 		previous := a.skillMemory
-		if err := a.skillMemory.rememberRequest(catalog, prepared.Names, original.Instructions); err != nil {
+		if err := a.skillMemory.rememberRequest(catalog, prepared.Names, prepared.ExplicitNames, original.Instructions); err != nil {
 			a.skillMemory = previous
 			a.skillMu.Unlock()
 			return "", err
@@ -293,10 +354,10 @@ func (a *Agent) ConfigureSkills(catalog *skills.Catalog, request *skills.Request
 		}
 		return context, nil
 	}
-	RegisterSkills(a.Registry, catalog, func() bool {
+	RegisterSkills(a.Registry, catalog, func(meta skills.Metadata) bool {
 		a.skillMu.Lock()
 		defer a.skillMu.Unlock()
-		return a.skillMemory.Requested
+		return a.skillMemory.allowsUserOnly(meta)
 	}, func(view skills.View) error {
 		a.skillMu.Lock()
 		accepted := false
@@ -434,7 +495,7 @@ func PlanSkillRequest(catalog *skills.Catalog, request skills.Request) (Prepared
 		return PreparedSkillRequest{}, err
 	}
 	memory, _ := decodeSkillMemory(request.WorkflowContext)
-	if err := memory.rememberRequest(catalog, prepared.Names, request.Instructions); err != nil {
+	if err := memory.rememberRequest(catalog, prepared.Names, prepared.ExplicitNames, request.Instructions); err != nil {
 		return PreparedSkillRequest{}, err
 	}
 	if len(memory.Sources) > 0 {
@@ -543,7 +604,8 @@ func completeSkillReferences(catalog *skills.Catalog, request skills.Request, lo
 			updated.addSource(skills.Metadata{Name: source.Name, Source: source.Source, BaseDir: source.BaseDir})
 			continue
 		}
-		meta, reference, err := catalog.PrepareSource(skills.Metadata{Name: source.Name, Source: source.Source, BaseDir: source.BaseDir}, memory.Requested)
+		identity := skills.Metadata{Name: source.Name, Source: source.Source, BaseDir: source.BaseDir}
+		meta, reference, err := catalog.PrepareSource(identity, memory.allowsUserOnly(identity))
 		if err != nil {
 			return skills.Request{}, err
 		}

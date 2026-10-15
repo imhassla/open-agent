@@ -90,9 +90,20 @@ func TestExistingRootPathsDoNotBecomeMissingSkillRequests(t *testing.T) {
 			}
 		}
 	}
-	for _, text := range []string{"Use /skill:tmp", "Use /open-agent-missing-skill-fixture"} {
-		if _, err := catalog.Prepare(skills.Request{Instructions: text}); err == nil {
-			t.Errorf("missing explicit skill %q accepted", text)
+	// Unknown NAMESPACED requests stay loud: /skill:name is an unambiguous ask.
+	if _, err := catalog.Prepare(skills.Request{Instructions: "Use /skill:tmp"}); err == nil {
+		t.Errorf("missing namespaced skill accepted")
+	}
+	// Unknown BARE /tokens are ordinary prose (route paths like /login, /api) —
+	// they must not become failed skill requests that kill the run (review F1).
+	for _, text := range []string{
+		"Use /open-agent-missing-skill-fixture",
+		"add rate limiting to the /login endpoint",
+		"the handler for /api returns 500",
+	} {
+		prepared, err := catalog.Prepare(skills.Request{Instructions: text})
+		if err != nil || len(prepared.Names) != 0 {
+			t.Errorf("bare unknown token in %q should be plain text: %+v, %v", text, prepared, err)
 		}
 	}
 	project := t.TempDir()
