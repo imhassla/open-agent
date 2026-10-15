@@ -296,3 +296,42 @@ func TestCandidateArgsSandboxForwarding(t *testing.T) {
 		t.Errorf("sandbox leaked into argv: %v", joined)
 	}
 }
+
+// mcpArgValue returns the value following --mcp in args, or "" when absent.
+func mcpArgValue(t *testing.T, args []string) string {
+	t.Helper()
+	for i, a := range args {
+		if a == "--mcp" {
+			if i+1 >= len(args) {
+				t.Fatalf("--mcp has no value: %v", args)
+			}
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+func TestCandidateArgsMCPForwarding(t *testing.T) {
+	// A RELATIVE config path must be absolutized against the parent's cwd:
+	// candidates run with cwd = their isolated checkout, where the relative
+	// path would resolve against the candidate tree instead.
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := mcpArgValue(t, candidateArgs("t", "glm", 0, options{mcp: ".mcp.json"}, time.Minute))
+	if want := filepath.Join(wd, ".mcp.json"); got != want {
+		t.Errorf("--mcp = %q, want absolutized %q", got, want)
+	}
+
+	// An already-absolute path passes through unchanged (modulo cleaning).
+	abs := filepath.Join(t.TempDir(), "servers.json")
+	if got := mcpArgValue(t, candidateArgs("t", "glm", 0, options{mcp: abs}, time.Minute)); got != abs {
+		t.Errorf("--mcp = %q, want %q", got, abs)
+	}
+
+	// No --mcp on the parent → nothing MCP-related in the candidate argv.
+	if got := mcpArgValue(t, candidateArgs("t", "qwen", 0, options{}, time.Minute)); got != "" {
+		t.Errorf("--mcp leaked into argv without the flag: %q", got)
+	}
+}

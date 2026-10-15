@@ -62,6 +62,9 @@ tree has a `go.mod`), and only the winning diff applied to the real tree. REQUIR
 git-clean tree (exit 2 otherwise, nothing spent) and the repo ROOT. `--max-cost` is split
 across the n candidates — budget the cap at n× a single-run cap. All-fail → exit 1,
 nothing applied. `--sandbox` forwards to candidates (each mounts its own tree in Docker).
+`--mcp` forwards with the config path absolutized (same config for every candidate).
+CAUTION: MCP side effects are SHARED across candidates — servers are external processes,
+not tree-isolated — and each candidate starts its own server instances (n × servers).
 
 Extendable guardrails: deny rules load from `~/.config/open-agent/guardrails` and
 `./.open-agent/guardrails` (`name: regex` for bash; `write name: glob` for write paths).

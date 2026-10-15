@@ -175,7 +175,13 @@ func main() {
 	deps.PlanModel = opts.planModel
 
 	// Opt-in MCP: load servers from the config and expose their tools to workers.
-	if opts.mcp != "" {
+	// Skipped when this invocation routes to best-of-N (code --candidates ≥ 2
+	// with a prompt, the exact condition checked below): the parent only
+	// orchestrates candidate subprocesses there and never runs a worker itself,
+	// and each candidate starts its own MCP servers — parent-side instances
+	// would be started, never called, and reaped at exit.
+	bestOfN := cmd == "code" && opts.candidates >= 2 && task != ""
+	if opts.mcp != "" && !bestOfN {
 		servers, err := tools.LoadMCPServers(opts.mcp)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "mcp config:", err)
@@ -724,7 +730,10 @@ Flags:
                        --max-cost is split evenly across the n candidates. Ties:
                        fewest changed lines, then cost. --sandbox forwards to
                        candidates (each mounts its own isolated tree); --mcp
-                       does NOT.
+                       forwards with the config path made absolute (each
+                       candidate starts its OWN server instances, and MCP
+                       side effects are SHARED across candidates — servers
+                       are external processes, not part of the tree).
       --port <n>       Port for the dashboard command (default 8787)
       --families a,b   Families for the bench matrix (default: active family)
       --mcp <path>     Load MCP stdio servers from a config (e.g. .mcp.json) and

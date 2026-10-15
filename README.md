@@ -122,7 +122,14 @@ resulting dirt is the winning diff, reviewable with `git diff`). `--max-cost` is
 evenly across the candidates, so total spend stays under the same cap. If every
 candidate fails, nothing is applied and the exit code is 1. `--sandbox` forwards to
 the candidates — each subprocess mounts its **own** isolated tree in Docker, so
-containerized bash composes cleanly with best-of-N isolation.
+containerized bash composes cleanly with best-of-N isolation. `--mcp` forwards too,
+with the config path made absolute so every candidate loads the *same* config the
+parent would (a relative `.mcp.json` would otherwise resolve inside the candidate's
+checkout). Two caveats: MCP servers are external processes, so unlike the isolated
+file trees their side effects are **shared** — a candidate calling an MCP write-tool
+mutates state that every other candidate (and your real environment) sees; and each
+candidate subprocess starts its **own** instances of the configured servers, so N
+candidates cost N × the servers' startup and memory.
 
 For scripted/agent callers (e.g. a supervising LLM delegating subtasks), see
 [`AGENTS.md`](AGENTS.md) — the machine contract (`--json` envelope, cost caps, tier

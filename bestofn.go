@@ -52,8 +52,8 @@ type bofCandidate struct {
 	envOK  bool   // envelope parsed AND env.OK
 	runErr string // spawn/parse/timeout error; "" when the subprocess produced an envelope
 
-	diff      []byte   // git diff of the candidate tree vs the HEAD baseline (binary-safe)
-	diffLines int      // added+deleted lines across the diff (numstat)
+	diff      []byte // git diff of the candidate tree vs the HEAD baseline (binary-safe)
+	diffLines int    // added+deleted lines across the diff (numstat)
 	diffFiles int
 	diffPaths []string // numstat paths — policy-checked against the PARENT's guardrails before apply
 
@@ -225,8 +225,9 @@ func initBaseline(dir string) error {
 
 // candidateArgs builds the exact subprocess argv (after the binary path):
 // the code verb in --json mode, routing disabled so -f pins a family
-// statically, the per-candidate cost slice, and the caller's step/token/model
-// settings passed through. "--" guards a task that starts with '-'.
+// statically, the per-candidate cost slice, and the caller's
+// step/token/model/sandbox/mcp settings passed through. "--" guards a task
+// that starts with '-'.
 func candidateArgs(task, family string, perCost float64, opts options, deadline time.Duration) []string {
 	args := []string{"code", "--json", "--no-route", "-f", family}
 	if perCost > 0 {
@@ -250,6 +251,21 @@ func candidateArgs(task, family string, perCost float64, opts options, deadline 
 		if opts.sandboxImage != "" {
 			args = append(args, "--sandbox-image", opts.sandboxImage)
 		}
+	}
+	// --mcp forwards with the config path made ABSOLUTE: each candidate runs
+	// with cwd = its isolated checkout, where a relative path (.mcp.json) would
+	// resolve against the CANDIDATE tree — present only if HEAD happens to track
+	// it. Absolutizing against the parent's cwd makes every candidate load the
+	// SAME config the parent would. Semantics differ from the file tree: MCP
+	// servers are external stdio processes, so their side effects are SHARED
+	// across candidates (no per-tree isolation), and each candidate subprocess
+	// starts its OWN instances of the configured servers (N candidates × servers).
+	if opts.mcp != "" {
+		mcpPath := opts.mcp
+		if abs, aerr := filepath.Abs(mcpPath); aerr == nil {
+			mcpPath = abs
+		}
+		args = append(args, "--mcp", mcpPath)
 	}
 	args = append(args, "--deadline", deadline.String())
 	return append(args, "--", task)
