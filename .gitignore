@@ -1,6 +1,7 @@
 # build output
 /open-agent
 /oa
+/dist/
 *.test
 # local secrets & state
 .env
