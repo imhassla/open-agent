@@ -77,13 +77,9 @@ const (
 	// (TAU-Bench 70.7). terra/sol stay pin-only premium like kimi-k3/qwen3.8-max.
 	// NOTE: luna accepts NO temperature/top_p (reasoning-model surface, verified
 	// via supported_parameters) — adaptiveForModel must send nothing.
+	// (ByteDance Seed was trialed 2026-09-04 and REJECTED by our own bench:
+	// 7/7 correct but $0.31/matrix — 5-13× every other family — and slow.)
 	OpenAILuna = "openai/gpt-5.6-luna"
-
-	// ByteDance Seed (added 2026-09-04, PROVISIONAL — vendor-reported benches;
-	// keep only if our own bench matrix validates it).
-	SeedCoder = "bytedance-seed/seed-2.0-code" // agentic-coding line
-	SeedTurbo = "bytedance-seed/seed-2-1-turbo"
-	SeedMini  = "bytedance-seed/seed-2.0-mini"
 )
 
 // pricing holds [input, output] USD per token for cost estimation.
@@ -125,10 +121,6 @@ var pricing = map[string][2]float64{
 	MistralCheap:    {0.000000075, 0.0000002},
 
 	OpenAILuna: {0.0000002, 0.0000012},
-
-	SeedCoder: {0.0000005, 0.000003},
-	SeedTurbo: {0.0000005, 0.0000025},
-	SeedMini:  {0.0000001, 0.0000004},
 }
 
 var pricingMu sync.RWMutex

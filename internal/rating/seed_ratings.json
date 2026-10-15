@@ -1,1 +1,177 @@
-{"ask|deepseek/deepseek-v4-pro": {"avg_cost": 0.0019802006964,"pass_rate": 1,"samples": 4},"ask|moonshotai/kimi-k2.6": {"avg_cost": 0.00591205,"pass_rate": 1,"samples": 1},"ask|moonshotai/kimi-k3": {"avg_cost": 0.001446,"pass_rate": 1,"samples": 1},"ask|qwen/qwen3-coder-next": {"avg_cost": 1.314e-05,"pass_rate": 1,"samples": 1},"ask|qwen/qwen3.7-flash": {"avg_cost": 2.372e-05,"pass_rate": 1,"samples": 1},"code/bugfix|deepseek/deepseek-v4-pro": {"avg_cost": 0,"pass_rate": 1,"samples": 1},"code/bugfix|deepseek/deepseek-v4-pro-0813": {"avg_cost": 0.004769688,"pass_rate": 1,"samples": 1},"code/bugfix|minimax/minimax-m2.5": {"avg_cost": 0.00424949265571247,"pass_rate": 1,"samples": 18},"code/bugfix|mistralai/codestral-2508": {"avg_cost": 0.004043530799999999,"pass_rate": 0.51,"samples": 3},"code/bugfix|moonshotai/kimi-k2.7-code": {"avg_cost": 0.00520929,"pass_rate": 1,"samples": 3},"code/bugfix|qwen/qwen3-coder": {"avg_cost": 0.04686384,"pass_rate": 1,"samples": 1},"code/bugfix|qwen/qwen3-coder-next": {"avg_cost": 0.0037290317653423943,"pass_rate": 0.9670089889008278,"samples": 19},"code/bugfix|z-ai/glm-5.1": {"avg_cost": 0.005569542,"pass_rate": 1,"samples": 2},"code/codegen|deepseek/deepseek-v4-pro": {"avg_cost": 0.00714392,"pass_rate": 0.2401,"samples": 5},"code/codegen|deepseek/deepseek-v4-pro-0813": {"avg_cost": 0.021389019718700473,"pass_rate": 0.48009900999999994,"samples": 9},"code/codegen|minimax/minimax-m2.5": {"avg_cost": 0.004899754319331985,"pass_rate": 0.76183477232847,"samples": 26},"code/codegen|mistralai/codestral-2508": {"avg_cost": 0.00113303,"pass_rate": 0,"samples": 6},"code/codegen|moonshotai/kimi-k2.7-code": {"avg_cost": 0.014602249817514908,"pass_rate": 0.3429999999999999,"samples": 14},"code/codegen|qwen/qwen3-coder": {"avg_cost": 0.08963014852194671,"pass_rate": 0.6751261462407748,"samples": 26},"code/codegen|qwen/qwen3-coder-next": {"avg_cost": 0.008598200310787148,"pass_rate": 0.8525755608709283,"samples": 68},"code/codegen|x-ai/grok-build-0.1": {"avg_cost": 0.05679058080660711,"pass_rate": 1,"samples": 16},"code/codegen|z-ai/glm-5.1": {"avg_cost": 0.006956382799215666,"pass_rate": 0.9892177420687382,"samples": 20},"code/refactor|deepseek/deepseek-v4-pro": {"avg_cost": 0.0670213138,"pass_rate": 1,"samples": 1},"code/refactor|mistralai/codestral-2508": {"avg_cost": 0.007579057979999999,"pass_rate": 1,"samples": 4},"code/refactor|moonshotai/kimi-k2.7-code": {"avg_cost": 0.00623641,"pass_rate": 1,"samples": 2},"code|deepseek/deepseek-v4-pro": {"avg_cost": 0.015716615772,"pass_rate": 0.564649,"samples": 7},"code|deepseek/deepseek-v4-pro-0813": {"avg_cost": 0.020559980530670333,"pass_rate": 0.4980993069999999,"samples": 10},"code|minimax/minimax-m2.5": {"avg_cost": 0.00487047830115106,"pass_rate": 0.7726577208502778,"samples": 44},"code|mistralai/codestral-2508": {"avg_cost": 0.008720570311451998,"pass_rate": 0.8823509999999999,"samples": 13},"code|moonshotai/kimi-k2.7-code": {"avg_cost": 0.014264869660875094,"pass_rate": 0.3429999999999999,"samples": 20},"code|qwen/qwen3-coder": {"avg_cost": 0.08965659853931406,"pass_rate": 0.6751764153685423,"samples": 27},"code|qwen/qwen3-coder-next": {"avg_cost": 0.008626434013666636,"pass_rate": 0.8527919435739758,"samples": 87},"code|x-ai/grok-build-0.1": {"avg_cost": 0.05867412973495367,"pass_rate": 0.9915257425299998,"samples": 17},"code|z-ai/glm-5.1": {"avg_cost": 0.00659492778477939,"pass_rate": 0.9947166936136816,"samples": 22},"plan/atomic|minimax/minimax-m2.1": {"avg_cost": 0,"pass_rate": 0.48999999999999994,"samples": 4},"plan/multi|google/gemini-3.5-flash": {"avg_cost": 0,"pass_rate": 1,"samples": 3},"plan/multi|minimax/minimax-m2.1": {"avg_cost": 0,"pass_rate": 1,"samples": 1},"plan/multi|z-ai/glm-5.2": {"avg_cost": 0,"pass_rate": 1,"samples": 5},"plan|google/gemini-3.5-flash": {"avg_cost": 0,"pass_rate": 1,"samples": 4},"plan|minimax/minimax-m2.1": {"avg_cost": 0,"pass_rate": 0.5529999999999999,"samples": 5},"plan|moonshotai/kimi-k2-thinking": {"avg_cost": 0,"pass_rate": 1,"samples": 1},"plan|z-ai/glm-5.2": {"avg_cost": 0,"pass_rate": 0.8823509999999999,"samples": 7},"research|deepseek/deepseek-r1-0528": {"avg_cost": 0.00631992,"pass_rate": 1,"samples": 4},"research|minimax/minimax-m2.1": {"avg_cost": 0.005409816608006999,"pass_rate": 1,"samples": 8},"research|mistralai/mistral-large-2512": {"avg_cost": 0.01615034,"pass_rate": 1,"samples": 3},"research|moonshotai/kimi-k2-thinking": {"avg_cost": 0.011882507999999998,"pass_rate": 1,"samples": 4},"research|moonshotai/kimi-k3": {"avg_cost": 0.1689204,"pass_rate": 1,"samples": 1},"research|qwen/qwen3-235b-a22b-thinking-2507": {"avg_cost": 0.02184545,"pass_rate": 1,"samples": 2},"research|x-ai/grok-4.20": {"avg_cost": 0.00771882,"pass_rate": 1,"samples": 2}}
+{
+"ask|deepseek/deepseek-v4-pro": {
+"avg_cost": 0.0019802006964,
+"pass_rate": 1,
+"samples": 4
+},
+"ask|moonshotai/kimi-k2.6": {
+"avg_cost": 0.0006016036148198669,
+"pass_rate": 1,
+"samples": 28
+},
+"code/bugfix|minimax/minimax-m3": {
+"avg_cost": 0.00426981,
+"pass_rate": 1,
+"samples": 2
+},
+"code/bugfix|mistralai/codestral-2508": {
+"avg_cost": 0.004043530799999999,
+"pass_rate": 0.51,
+"samples": 3
+},
+"code/bugfix|moonshotai/kimi-k2.7-code": {
+"avg_cost": 0.005209291499999999,
+"pass_rate": 1,
+"samples": 3
+},
+"code/bugfix|qwen/qwen3-coder-next": {
+"avg_cost": 0.0023750635150577622,
+"pass_rate": 0.9999703715207237,
+"samples": 52
+},
+"code/codegen|deepseek/deepseek-v4-flash-0731": {
+"avg_cost": 0.0016425199073299998,
+"pass_rate": 1,
+"samples": 6
+},
+"code/codegen|deepseek/deepseek-v4-pro": {
+"avg_cost": 0.007143916259999999,
+"pass_rate": 0.24009999999999992,
+"samples": 5
+},
+"code/codegen|minimax/minimax-m3": {
+"avg_cost": 0.007414676372399999,
+"pass_rate": 0.7899999999999999,
+"samples": 6
+},
+"code/codegen|mistralai/codestral-2508": {
+"avg_cost": 0.001133028,
+"pass_rate": 0,
+"samples": 6
+},
+"code/codegen|moonshotai/kimi-k2.7-code": {
+"avg_cost": 0.012318334872260434,
+"pass_rate": 0.5400999999999999,
+"samples": 15
+},
+"code/codegen|openai/gpt-5.6-luna": {
+"avg_cost": 0.0030927792136599998,
+"pass_rate": 1,
+"samples": 7
+},
+"code/codegen|qwen/qwen3-coder-next": {
+"avg_cost": 0.004244247437118002,
+"pass_rate": 0.9999996101955448,
+"samples": 255
+},
+"code/codegen|x-ai/grok-build-0.1": {
+"avg_cost": 0.05679058080660711,
+"pass_rate": 1,
+"samples": 16
+},
+"code/codegen|z-ai/glm-5.3": {
+"avg_cost": 0.02017147154248,
+"pass_rate": 1,
+"samples": 6
+},
+"code/refactor|mistralai/codestral-2508": {
+"avg_cost": 0.007579057979999999,
+"pass_rate": 1,
+"samples": 4
+},
+"code/refactor|moonshotai/kimi-k2.7-code": {
+"avg_cost": 0.0062364149999999995,
+"pass_rate": 1,
+"samples": 2
+},
+"code|deepseek/deepseek-v4-flash-0731": {
+"avg_cost": 0.0014669086921309997,
+"pass_rate": 1,
+"samples": 7
+},
+"code|deepseek/deepseek-v4-pro": {
+"avg_cost": 0.015716615772,
+"pass_rate": 0.564649,
+"samples": 7
+},
+"code|minimax/minimax-m3": {
+"avg_cost": 0.007338671907233999,
+"pass_rate": 0.7899999999999999,
+"samples": 8
+},
+"code|mistralai/codestral-2508": {
+"avg_cost": 0.008720570311451998,
+"pass_rate": 0.8823509999999999,
+"samples": 13
+},
+"code|moonshotai/kimi-k2.7-code": {
+"avg_cost": 0.012082168762612564,
+"pass_rate": 0.5400999999999999,
+"samples": 21
+},
+"code|openai/gpt-5.6-luna": {
+"avg_cost": 0.0030927792136599998,
+"pass_rate": 1,
+"samples": 7
+},
+"code|qwen/qwen3-coder-next": {
+"avg_cost": 0.00409213726068694,
+"pass_rate": 0.9999999541398978,
+"samples": 307
+},
+"code|x-ai/grok-build-0.1": {
+"avg_cost": 0.05867412973495367,
+"pass_rate": 0.9915257425299998,
+"samples": 17
+},
+"code|z-ai/glm-5.3": {
+"avg_cost": 0.021850259559735997,
+"pass_rate": 1,
+"samples": 7
+},
+"plan/atomic|minimax/minimax-m2.1": {
+"avg_cost": 0,
+"pass_rate": 0.48999999999999994,
+"samples": 4
+},
+"plan/multi|minimax/minimax-m2.1": {
+"avg_cost": 0,
+"pass_rate": 1,
+"samples": 2
+},
+"plan/multi|z-ai/glm-5.2": {
+"avg_cost": 0,
+"pass_rate": 1,
+"samples": 5
+},
+"plan|minimax/minimax-m2.1": {
+"avg_cost": 0,
+"pass_rate": 0.6870999999999999,
+"samples": 6
+},
+"plan|z-ai/glm-5.2": {
+"avg_cost": 0,
+"pass_rate": 0.8823509999999999,
+"samples": 7
+},
+"research|minimax/minimax-m2.1": {
+"avg_cost": 0.004199260625604899,
+"pass_rate": 1,
+"samples": 9
+},
+"research|mistralai/mistral-large-2512": {
+"avg_cost": 0.016150339,
+"pass_rate": 1,
+"samples": 3
+},
+"research|moonshotai/kimi-k2-thinking": {
+"avg_cost": 0.011882507999999998,
+"pass_rate": 1,
+"samples": 4
+},
+"research|x-ai/grok-4.20": {
+"avg_cost": 0.00771882,
+"pass_rate": 1,
+"samples": 2
+}
+}
