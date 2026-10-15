@@ -36,6 +36,8 @@ const (
 	FamilyQwen     Family = "qwen"
 	FamilyMiniMax  Family = "minimax"
 	FamilyMistral  Family = "mistral"
+	FamilyOpenAI   Family = "openai"
+	FamilySeed     Family = "seed"
 )
 
 // DefaultFamily is used when none is specified.
@@ -88,6 +90,9 @@ var adaptiveOff = os.Getenv("OPEN_AGENT_ADAPTIVE") == "0"
 //   - xAI grok-code guide: reasoning model — send NO sampling overrides.
 //   - Google: Gemini 2.5 function-calling favors low temp for deterministic
 //     args (code only); Gemini 3 docs FORBID overriding sampling — no entry.
+//   - OpenAI gpt-5.6-luna: accepts NO temperature/top_p (supported_parameters
+//     lists only reasoning knobs) — deliberately no case, the default sends nothing.
+//   - ByteDance Seed: no published sampling guidance — no case.
 func adaptiveForModel(model string, role Role) (addendum string, p sampling) {
 	if adaptiveOff {
 		return "", sampling{}
@@ -212,6 +217,26 @@ var familyModels = map[Family]map[Role]string{
 		RoleJudge:    llm.MistralFlagship,
 		RoleCheap:    llm.MistralCheap,
 	},
+	// OpenAI: single-slug family — the luna tier is worker-priced post the 2026-08
+	// price cut and serves every role; terra/sol stay pin-only premium.
+	FamilyOpenAI: {
+		RoleCode:     llm.OpenAILuna,
+		RoleAsk:      llm.OpenAILuna,
+		RoleResearch: llm.OpenAILuna,
+		RolePlan:     llm.OpenAILuna,
+		RoleJudge:    llm.OpenAILuna,
+		RoleCheap:    llm.OpenAILuna,
+	},
+	// ByteDance Seed: PROVISIONAL (vendor-reported benches) — stays only if our
+	// own bench matrix validates it; remove the row (and llm consts) otherwise.
+	FamilySeed: {
+		RoleCode:     llm.SeedCoder,
+		RoleAsk:      llm.SeedTurbo,
+		RoleResearch: llm.SeedTurbo,
+		RolePlan:     llm.SeedTurbo,
+		RoleJudge:    llm.SeedTurbo,
+		RoleCheap:    llm.SeedMini,
+	},
 }
 
 // RoutesFor resolves the role→route table for a family (falls back to the default
@@ -245,7 +270,7 @@ func KnownFamily(f Family) bool {
 
 // Families returns the supported family names (for help/UX).
 func Families() []Family {
-	return []Family{FamilyKimi, FamilyGLM, FamilyGoogle, FamilyGrok, FamilyDeepSeek, FamilyQwen, FamilyMiniMax, FamilyMistral}
+	return []Family{FamilyKimi, FamilyGLM, FamilyGoogle, FamilyGrok, FamilyDeepSeek, FamilyQwen, FamilyMiniMax, FamilyMistral, FamilyOpenAI, FamilySeed}
 }
 
 const (

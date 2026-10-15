@@ -510,9 +510,10 @@ func TestEstimatePlanCost(t *testing.T) {
 	d.Routes = RoutesFor(FamilyKimi)
 	// Warm one code model with a known per-task cost so the estimate is learned.
 	for i := 0; i < 3; i++ {
-		d.Rating.Update("code/codegen", llm.MiniMaxCoder, false, 0) // bench a cheap rung (fine bucket)
-		d.Rating.Update("code/codegen", llm.ModelCoder, true, 0.02) // reliable at $0.02/task
-		d.Rating.Update("code", llm.ModelCoder, true, 0.02)         // warm coarse too (AvgCost source)
+		d.Rating.Update("code/codegen", llm.MiniMaxCoder, false, 0)  // bench a cheap rung (fine bucket)
+		d.Rating.Update("code/codegen", llm.DeepSeekCoder, false, 0) // ...and the new cheapest rung (v4-flash, post-2026-09 ladder refresh)
+		d.Rating.Update("code/codegen", llm.ModelCoder, true, 0.02)  // reliable at $0.02/task
+		d.Rating.Update("code", llm.ModelCoder, true, 0.02)          // warm coarse too (AvgCost source)
 	}
 	plan := &Plan{Goal: "g", Tasks: []Task{
 		{ID: "t1", Goal: "implement a parser", Role: RoleCode, Acceptance: "go test ./..."},

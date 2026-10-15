@@ -493,14 +493,15 @@ func TestMaxTokensClampedToCostHeadroom(t *testing.T) {
 		got = append(got, opt.MaxTokens)
 		return &llm.Response{Message: llm.Message{Role: "assistant", Content: "done"}}, nil
 	}
-	// $0.01 cap at kimi-k2.6 output $3.42e-6/tok → ~2923 tokens ≪ 8192 default.
+	// $0.01 cap at kimi-k2.6 output $4.00e-6/tok (2026-09 repricing) → 2500
+	// tokens ≪ 8192 default.
 	bud := budget.New(10, 0, 0.01, 0)
 	a := &Agent{Client: optDoer{record}, Registry: NewRegistry(), Budget: bud, Model: llm.ModelFlagship}
 	if _, err := a.Run(context.Background(), "x"); err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0] < 2900 || got[0] > 2950 {
-		t.Errorf("cost-clamped max_tokens = %v, want ~2923", got)
+	if len(got) != 1 || got[0] < 2450 || got[0] > 2550 {
+		t.Errorf("cost-clamped max_tokens = %v, want ~2500", got)
 	}
 }
 
