@@ -1,7 +1,10 @@
 package agent
 
 import (
+	"context"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/imhassla/open-agent/internal/tools"
 )
@@ -14,15 +17,28 @@ import (
 // "ERROR:" prefix (which routes into ToolErrors and is what the apply-guard
 // counts).
 //
-// It catches exactly one thing: an edit that leaves a .go file UNPARSEABLE (a
-// bad edit_file splice, unbalanced braces in a write_file). Surfacing that on
-// the same step lets the worker fix it immediately instead of discovering it
-// later at build/test time. It is a parse-only check (tools.CheckGoSyntax), not
-// gofmt: a valid-but-unformatted file is intentionally silent, so the hook never
-// nudges toward a whole-file reformat that would churn an otherwise surgical
-// diff — and it has zero false positives from an in-flight multi-file change
-// (unlike go vet / go build, which need the whole package to compile). Tools
-// that already validate their own output (go_replace_func, go_fmt) are skipped.
+// Two layers, in order:
+//
+//  1. Parse check (always): an edit that leaves a .go file UNPARSEABLE (a bad
+//     edit_file splice, unbalanced braces in a write_file), or a .py/.js file
+//     with a syntax error (python compile() / node --check). Parse-only, not
+//     gofmt: a valid-but-unformatted file is intentionally silent, so the hook
+//     never nudges toward a whole-file reformat that would churn an otherwise
+//     surgical diff. When the parse check fails, its note is returned ALONE —
+//     type-level diagnostics on an unparseable file would be redundant noise.
+//
+//  2. LSP advisory (parse-clean files only): error-severity diagnostics from a
+//     language server that is ALREADY warm in this process, catching what a
+//     parse can't (undefined identifiers, wrong argument counts). Warm-only
+//     with a hard 2s cap, so the hot path never pays a cold start; the first
+//     supported edit of a run triggers an async warm-up instead (see
+//     lspAdvisory). Any LSP failure/timeout is silent, and the note stays
+//     advisory — mid-multi-file-change diagnostics can be transient (refs to a
+//     file the worker will create next). OPEN_AGENT_NO_LSP_HOOK=1 disables
+//     this layer entirely.
+//
+// Tools that already validate their own output (go_replace_func, go_fmt) are
+// skipped.
 func (a *Agent) postEditVerify(name string, tool Tool, args map[string]any) string {
 	if !a.RequireApply {
 		return "" // only code workers edit files; ask/synthesizer roles are untouched
@@ -56,8 +72,41 @@ func (a *Agent) postEditVerify(name string, tool Tool, args map[string]any) stri
 				truncate(strings.ReplaceAll(err.Error(), "\n", " "), 200) +
 				" — fix it before moving on]"
 		}
+	default:
+		return ""
 	}
-	return ""
+	return a.lspAdvisory(path)
+}
+
+// Seams for lspAdvisory so unit tests never spawn or query a real language
+// server; production code leaves them at the tools defaults.
+var (
+	lspWarmup   = tools.StartLSPWarmup
+	lspWarmDiag = tools.LSPWarmDiagnostics
+)
+
+// lspAdvisory returns an advisory note with ERROR-severity diagnostics for a
+// parse-clean edited file, but ONLY when a language server for that language is
+// already warm in-process — a cold start would blow the hook's latency budget,
+// so the cold path skips silently after firing an async warm-up (making the
+// server warm for LATER edits in the run). Hard 2s cap on the warm query; at
+// most 3 diagnostics surface; every failure mode is silent (best-effort).
+func (a *Agent) lspAdvisory(path string) string {
+	if os.Getenv("OPEN_AGENT_NO_LSP_HOOK") == "1" {
+		return "" // kill-switch: no warm-up, no query
+	}
+	// Async + idempotent: boots the server once per language per process, in a
+	// background goroutine; no-op when already warm/booting/failed/uninstalled.
+	lspWarmup(path)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	sum, ok := lspWarmDiag(ctx, path, 3)
+	if !ok || sum == "" {
+		return "" // not warm yet, infra failure, or clean — all silent
+	}
+	return "\n[verify: lsp reports errors in " + path + " — " +
+		truncate(sum, 300) +
+		" — advisory: may be transient while a multi-file change is in flight]"
 }
 
 func hasAnySuffix(s string, suffixes ...string) bool {
